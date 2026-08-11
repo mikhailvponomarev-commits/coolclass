@@ -1,9 +1,9 @@
-import asyncio
 import logging
 import os
+import secrets
 import sqlite3
-from datetime import datetime
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -12,19 +12,27 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Mikhail7890").lstrip("@").lower()
 DB_PATH = os.getenv("DB_PATH", "coolclass.db")
+PORT = int(os.getenv("PORT", "10000"))
+WEBHOOK_PATH = "/webhook"
+PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET") or secrets.token_urlsafe(32)
 
 if not TOKEN:
     raise RuntimeError("BOT_TOKEN is not set")
+if not PUBLIC_URL:
+    raise RuntimeError("RENDER_EXTERNAL_URL is not available")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
+
 
 class LeadForm(StatesGroup):
     parent_name = State()
@@ -36,14 +44,19 @@ class LeadForm(StatesGroup):
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-    conn.execute("CREATE TABLE IF NOT EXISTS leads (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_name TEXT, child_age TEXT, phone TEXT, interest TEXT, telegram_username TEXT, created_at TEXT)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS leads (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_name TEXT, child_age TEXT, phone TEXT, interest TEXT, telegram_username TEXT, created_at TEXT)"
+    )
     conn.commit()
     return conn
 
 
 def set_setting(key: str, value: str):
     conn = db()
-    conn.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+    conn.execute(
+        "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
     conn.commit()
     conn.close()
 
@@ -56,38 +69,80 @@ def get_setting(key: str):
 
 
 def save_lead(data: dict):
+    from datetime import datetime
+
     conn = db()
     conn.execute(
         "INSERT INTO leads(parent_name,child_age,phone,interest,telegram_username,created_at) VALUES(?,?,?,?,?,?)",
-        (data["parent_name"], data["child_age"], data["phone"], data["interest"], data.get("username", ""), datetime.now().isoformat(timespec="seconds")),
+        (
+            data["parent_name"],
+            data["child_age"],
+            data["phone"],
+            data["interest"],
+            data.get("username", ""),
+            datetime.now().isoformat(timespec="seconds"),
+        ),
     )
     conn.commit()
     conn.close()
 
 
 def main_menu():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🏫 О школе"), KeyboardButton(text="📚 Программа")],
-        [KeyboardButton(text="🕘 Расписание"), KeyboardButton(text="💰 Стоимость")],
-        [KeyboardButton(text="📍 Как нас найти"), KeyboardButton(text="🎓 Записаться")],
-        [KeyboardButton(text="❓ Задать вопрос")],
-    ], resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🏫 О школе"), KeyboardButton(text="📚 Программа")],
+            [KeyboardButton(text="🕘 Расписание"), KeyboardButton(text="💰 Стоимость")],
+            [KeyboardButton(text="📍 Как нас найти"), KeyboardButton(text="🎓 Записаться")],
+            [KeyboardButton(text="❓ Задать вопрос")],
+        ],
+        resize_keyboard=True,
+    )
 
 
 def contact_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📱 Отправить номер телефона", request_contact=True)],
-        [KeyboardButton(text="↩️ Отмена")],
-    ], resize_keyboard=True, one_time_keyboard=True)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📱 Отправить номер телефона", request_contact=True)],
+            [KeyboardButton(text="↩️ Отмена")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def interest_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🎓 Поступление"), KeyboardButton(text="🏫 Перевод в школу")],
+            [KeyboardButton(text="👀 Экскурсия"), KeyboardButton(text="❓ Пока просто узнаю")],
+        ],
+        resize_keyboard=True,
+    )
 
 
 async def register_admin(message: Message):
     username = (message.from_user.username or "").lower()
     if username == ADMIN_USERNAME:
         set_setting("admin_chat_id", str(message.chat.id))
-        await message.answer("✅ Вы зарегистрированы как получатель заявок. Новые заявки будут приходить сюда.", reply_markup=main_menu())
+        await message.answer(
+            "✅ Вы зарегистрированы как получатель заявок. Новые заявки будут приходить сюда.",
+            reply_markup=main_menu(),
+        )
         return True
     return False
+
+
+async def notify_admin(text: str):
+    admin_chat_id = get_setting("admin_chat_id")
+    if not admin_chat_id:
+        logger.warning("Admin chat is not registered. Ask @%s to send /start to the bot.", ADMIN_USERNAME)
+        return False
+    try:
+        await bot.send_message(admin_chat_id, text)
+        return True
+    except Exception:
+        logger.exception("Failed to notify admin")
+        return False
 
 
 @dp.message(CommandStart())
@@ -178,7 +233,10 @@ async def location(message: Message):
 @dp.message(F.text == "🎓 Записаться")
 async def begin_lead(message: Message, state: FSMContext):
     await state.set_state(LeadForm.parent_name)
-    await message.answer("Отлично! Оставьте заявку — менеджер свяжется с вами.\n\n<b>Как вас зовут?</b>", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        "Отлично! Оставьте заявку — менеджер свяжется с вами.\n\n<b>Как вас зовут?</b>",
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
 
 @dp.message(LeadForm.parent_name)
@@ -188,7 +246,9 @@ async def lead_name(message: Message, state: FSMContext):
         return
     await state.update_data(parent_name=message.text.strip())
     await state.set_state(LeadForm.child_age)
-    await message.answer("<b>Сколько лет ребёнку?</b> Можно написать возраст или класс, например: «7 лет» или «2 класс».")
+    await message.answer(
+        "<b>Сколько лет ребёнку?</b> Можно написать возраст или класс, например: «7 лет» или «2 класс»."
+    )
 
 
 @dp.message(LeadForm.child_age)
@@ -198,7 +258,10 @@ async def lead_age(message: Message, state: FSMContext):
         return
     await state.update_data(child_age=message.text.strip())
     await state.set_state(LeadForm.phone)
-    await message.answer("<b>Оставьте номер телефона</b>, чтобы менеджер мог связаться с вами.", reply_markup=contact_keyboard())
+    await message.answer(
+        "<b>Оставьте номер телефона</b>, чтобы менеджер мог связаться с вами.",
+        reply_markup=contact_keyboard(),
+    )
 
 
 @dp.message(LeadForm.phone, F.contact)
@@ -206,51 +269,44 @@ async def lead_phone_contact(message: Message, state: FSMContext):
     phone = message.contact.phone_number
     await state.update_data(phone=phone)
     await state.set_state(LeadForm.interest)
-    await message.answer("<b>Что вас сейчас интересует?</b>", reply_markup=ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🎓 Поступление"), KeyboardButton(text="🏫 Перевод в школу")],
-        [KeyboardButton(text="👀 Экскурсия"), KeyboardButton(text="❓ Пока просто узнаю")],
-    ], resize_keyboard=True))
+    await message.answer("<b>Что вас сейчас интересует?</b>", reply_markup=interest_keyboard())
 
 
 @dp.message(LeadForm.phone)
 async def lead_phone_text(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     if len(text) < 7:
-        await message.answer("Пожалуйста, отправьте корректный номер телефона кнопкой ниже.", reply_markup=contact_keyboard())
+        await message.answer(
+            "Пожалуйста, отправьте корректный номер телефона кнопкой ниже.",
+            reply_markup=contact_keyboard(),
+        )
         return
     await state.update_data(phone=text)
     await state.set_state(LeadForm.interest)
-    await message.answer("<b>Что вас сейчас интересует?</b>", reply_markup=ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🎓 Поступление"), KeyboardButton(text="🏫 Перевод в школу")],
-        [KeyboardButton(text="👀 Экскурсия"), KeyboardButton(text="❓ Пока просто узнаю")],
-    ], resize_keyboard=True))
+    await message.answer("<b>Что вас сейчас интересует?</b>", reply_markup=interest_keyboard())
 
 
 @dp.message(LeadForm.interest)
 async def lead_interest(message: Message, state: FSMContext):
+    from datetime import datetime
+
     data = await state.get_data()
     data["interest"] = message.text or "Не указано"
     data["username"] = message.from_user.username or ""
     save_lead(data)
 
-    admin_chat_id = get_setting("admin_chat_id")
-    if admin_chat_id:
-        username = f"@{data['username']}" if data.get("username") else "нет username"
-        text = (
-            "🔔 <b>Новая заявка CoolClass</b>\n\n"
-            f"👤 Родитель: {data['parent_name']}\n"
-            f"👧 Возраст/класс: {data['child_age']}\n"
-            f"📞 Телефон: {data['phone']}\n"
-            f"🎯 Интерес: {data['interest']}\n"
-            f"💬 Telegram: {username}\n\n"
-            "Источник: Telegram-бот"
-        )
-        try:
-            await bot.send_message(admin_chat_id, text)
-        except Exception:
-            logger.exception("Failed to notify admin")
-    else:
-        logger.warning("Admin chat is not registered. Ask @%s to send /start to the bot.", ADMIN_USERNAME)
+    username = f"@{data['username']}" if data.get("username") else "нет username"
+    text = (
+        "🔔 <b>Новая заявка CoolClass</b>\n\n"
+        f"👤 Родитель: {data['parent_name']}\n"
+        f"👧 Возраст/класс: {data['child_age']}\n"
+        f"📞 Телефон: {data['phone']}\n"
+        f"🎯 Интерес: {data['interest']}\n"
+        f"💬 Telegram: {username}\n"
+        f"🕐 Время: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
+        "Источник: Telegram-бот"
+    )
+    await notify_admin(text)
 
     await state.clear()
     await message.answer(
@@ -268,6 +324,7 @@ async def question(message: Message):
         "Также можно позвонить: +7 929 692-92-08",
         reply_markup=main_menu(),
     )
+    await message.answer("Ваш вопрос можно отправить следующим сообщением.")
 
 
 @dp.message()
@@ -278,12 +335,51 @@ async def fallback(message: Message):
     )
 
 
-async def main():
+@dp.message(F.text)
+async def unused_text_handler(message: Message):
+    await message.answer("Выберите пункт меню ниже.", reply_markup=main_menu())
+
+
+async def health(request: web.Request):
+    return web.json_response({"status": "ok", "service": "coolclass-telegram-bot"})
+
+
+async def on_startup(bot_instance: Bot):
     db().close()
-    await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("CoolClass bot started")
-    await dp.start_polling(bot)
+    webhook_url = f"{PUBLIC_URL}{WEBHOOK_PATH}"
+    await bot_instance.set_webhook(
+        url=webhook_url,
+        secret_token=WEBHOOK_SECRET,
+        drop_pending_updates=False,
+    )
+    logger.info("CoolClass bot started with webhook: %s", webhook_url)
+
+
+async def on_shutdown(bot_instance: Bot):
+    try:
+        await bot_instance.delete_webhook(drop_pending_updates=False)
+    finally:
+        await bot_instance.session.close()
+
+
+def create_app():
+    app = web.Application()
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+
+    webhook_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+        secret_token=WEBHOOK_SECRET,
+        handle_in_background=True,
+    )
+    webhook_handler.register(app, path=WEBHOOK_PATH)
+
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+    setup_application(app, dp, bot=bot)
+    return app
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    web.run_app(create_app(), host="0.0.0.0", port=PORT)
