@@ -81,7 +81,7 @@ async def program(message:Message): await message.answer('<b>Программа<
 @dp.message(F.text=='🕘 Расписание')
 async def schedule(message:Message): await message.answer('<b>Расписание</b> 🕘\n\nПонедельник–пятница\n<b>09:00–18:00</b>\n\nЗанятия, питание, прогулки и дополнительные активности.',reply_markup=menu())
 @dp.message(F.text=='💰 Стоимость')
-async def price(message:Message): await message.answer('<b>Стоимость</b> 💰\n\n<b>60 000 ₽ в месяц</b>\n\nВсё включено, в том числе <b>трёхразовое питание</b>.',reply_markup=menu())
+async def price(message:Message): await message.answer('<b>Стоимость</b> 💰\n\n<b>65 000 ₽ в месяц</b>\n\nВсё включено, в том числе <b>трёхразовое питание</b>.',reply_markup=menu())
 @dp.message(F.text=='📍 Как нас найти')
 async def location(message:Message): await message.answer('<b>CoolClass</b> 📍\n\nМосква, ул. Плотинная, 28\nВнуково\n\n📞 <a href="tel:+79296929208">+7 929 692-92-08</a>',reply_markup=menu())
 @dp.message(F.text=='🎓 Записаться')
@@ -113,7 +113,7 @@ async def question(message:Message,state:FSMContext):
     text=(message.text or '').strip()
     if not text: return await message.answer('Напишите вопрос текстом.')
     u=f"@{message.from_user.username}" if message.from_user.username else 'нет username'; await notify_admin(f'❓ <b>Вопрос от посетителя CoolClass</b>\n\n💬 Telegram: {u}\n👤 {message.from_user.full_name}\n\n{text}'); await state.clear(); await message.answer('Спасибо! Вопрос передан менеджеру.',reply_markup=menu())
-@dp.message()
+@dp.message(F.text)
 async def fallback(message:Message): await message.answer('Выберите пункт меню ниже.',reply_markup=menu())
 
 async def health(request): return web.json_response({'status':'ok','service':'coolclass-telegram-bot'})
@@ -126,25 +126,13 @@ async def on_startup(bot_instance: Bot):
     webhook = await bot_instance.get_webhook_info()
     logger.info('Webhook registered: %s pending=%s', webhook.url, webhook.pending_update_count)
 
-async def on_shutdown(bot_instance: Bot):
-    logger.info('CoolClass bot shutting down')
-
-async def startup(app: web.Application):
-    await on_startup(bot)
-
-async def shutdown(app: web.Application):
-    await on_shutdown(bot)
-    await bot.session.close()
+async def on_shutdown(bot_instance: Bot): logger.info('CoolClass bot shutting down')
+async def startup(app: web.Application): await on_startup(bot)
+async def shutdown(app: web.Application): await on_shutdown(bot); await bot.session.close()
 
 def create_app():
-    app=web.Application()
-    app.router.add_get('/',health)
-    app.router.add_get('/health',health)
-    handler=SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET, handle_in_background=True)
-    handler.register(app,path=WEBHOOK_PATH)
-    app.on_startup.append(startup)
-    app.on_cleanup.append(shutdown)
-    return app
+    app=web.Application(); app.router.add_get('/',health); app.router.add_get('/health',health)
+    handler=SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET, handle_in_background=True); handler.register(app,path=WEBHOOK_PATH)
+    app.on_startup.append(startup); app.on_cleanup.append(shutdown); return app
 
-if __name__=='__main__':
-    web.run_app(create_app(),host='0.0.0.0',port=PORT)
+if __name__=='__main__': web.run_app(create_app(),host='0.0.0.0',port=PORT)
