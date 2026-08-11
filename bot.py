@@ -2,6 +2,7 @@ import logging
 import os
 import secrets
 import sqlite3
+from datetime import datetime
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
@@ -39,6 +40,7 @@ class LeadForm(StatesGroup):
     child_age = State()
     phone = State()
     interest = State()
+    question_text = State()
 
 
 def db():
@@ -69,8 +71,6 @@ def get_setting(key: str):
 
 
 def save_lead(data: dict):
-    from datetime import datetime
-
     conn = db()
     conn.execute(
         "INSERT INTO leads(parent_name,child_age,phone,interest,telegram_username,created_at) VALUES(?,?,?,?,?,?)",
@@ -288,8 +288,6 @@ async def lead_phone_text(message: Message, state: FSMContext):
 
 @dp.message(LeadForm.interest)
 async def lead_interest(message: Message, state: FSMContext):
-    from datetime import datetime
-
     data = await state.get_data()
     data["interest"] = message.text or "Не указано"
     data["username"] = message.from_user.username or ""
@@ -318,13 +316,34 @@ async def lead_interest(message: Message, state: FSMContext):
 
 
 @dp.message(F.text == "❓ Задать вопрос")
-async def question(message: Message):
+async def question_start(message: Message, state: FSMContext):
+    await state.set_state(LeadForm.question_text)
     await message.answer(
-        "Напишите ваш вопрос одним сообщением — я передам его менеджеру.\n\n"
-        "Также можно позвонить: +7 929 692-92-08",
+        "Напишите ваш вопрос одним сообщением — я передам его менеджеру.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+@dp.message(LeadForm.question_text)
+async def question_receive(message: Message, state: FSMContext):
+    question_text = (message.text or "").strip()
+    if not question_text:
+        await message.answer("Пожалуйста, напишите вопрос текстом.")
+        return
+
+    username = f"@{message.from_user.username}" if message.from_user.username else "нет username"
+    admin_text = (
+        "❓ <b>Вопрос от посетителя CoolClass</b>\n\n"
+        f"💬 Telegram: {username}\n"
+        f"👤 Имя в Telegram: {message.from_user.full_name}\n\n"
+        f"Вопрос:\n{question_text}"
+    )
+    await notify_admin(admin_text)
+    await state.clear()
+    await message.answer(
+        "Спасибо! Вопрос передан менеджеру CoolClass. Вам ответят в ближайшее время.",
         reply_markup=main_menu(),
     )
-    await message.answer("Ваш вопрос можно отправить следующим сообщением.")
 
 
 @dp.message()
@@ -333,11 +352,6 @@ async def fallback(message: Message):
         "Я могу рассказать о школе, программе, расписании и стоимости или принять заявку. Выберите пункт меню ниже.",
         reply_markup=main_menu(),
     )
-
-
-@dp.message(F.text)
-async def unused_text_handler(message: Message):
-    await message.answer("Выберите пункт меню ниже.", reply_markup=main_menu())
 
 
 async def health(request: web.Request):
@@ -358,8 +372,8 @@ async def on_startup(bot_instance: Bot):
 async def on_shutdown(bot_instance: Bot):
     try:
         await bot_instance.delete_webhook(drop_pending_updates=False)
-    finally:
-        await bot_instance.session.close()
+    except Exception:
+        logger.exception("Failed to delete webhook on shutdown")
 
 
 def create_app():
