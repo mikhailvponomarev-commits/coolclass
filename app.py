@@ -7,7 +7,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -25,60 +25,108 @@ if not TOKEN: raise RuntimeError("BOT_TOKEN is not set")
 if not PUBLIC_URL: raise RuntimeError("RENDER_EXTERNAL_URL is not available")
 logging.basicConfig(level=logging.INFO); logger=logging.getLogger(__name__)
 bot=Bot(token=TOKEN,default=DefaultBotProperties(parse_mode=ParseMode.HTML)); dp=Dispatcher(storage=MemoryStorage())
-class LeadForm(StatesGroup): parent_name=State(); child_age=State(); phone=State(); interest=State(); question=State()
+
+class LeadForm(StatesGroup):
+    parent_name=State(); child_age=State(); phone=State(); interest=State(); question=State()
+
 def db():
     conn=sqlite3.connect(DB_PATH); conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)"); conn.execute("CREATE TABLE IF NOT EXISTS leads (id INTEGER PRIMARY KEY AUTOINCREMENT,parent_name TEXT,child_age TEXT,phone TEXT,interest TEXT,telegram_username TEXT,created_at TEXT)"); conn.commit(); return conn
+
 def setting(key):
     conn=db(); row=conn.execute("SELECT value FROM settings WHERE key=?",(key,)).fetchone(); conn.close(); return row[0] if row else None
+
 def set_setting(key,value):
     conn=db(); conn.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(key,value)); conn.commit(); conn.close()
+
 def save_lead(d):
     conn=db(); conn.execute("INSERT INTO leads(parent_name,child_age,phone,interest,telegram_username,created_at) VALUES(?,?,?,?,?,?)",(d['parent_name'],d['child_age'],d['phone'],d['interest'],d.get('username',''),datetime.now().isoformat(timespec='seconds'))); conn.commit(); conn.close()
+
 def menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='🏫 О школе'),KeyboardButton(text='📚 Программа')],[KeyboardButton(text='🕘 Расписание'),KeyboardButton(text='💰 Стоимость')],[KeyboardButton(text='📍 Как нас найти'),KeyboardButton(text='🎓 Записаться')],[KeyboardButton(text='❓ Задать вопрос')]],resize_keyboard=True)
 def contact_menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='📱 Отправить номер телефона',request_contact=True)],[KeyboardButton(text='↩️ Отмена')]],resize_keyboard=True,one_time_keyboard=True)
 def interest_menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='🎓 Поступление'),KeyboardButton(text='🏫 Перевод в школу')],[KeyboardButton(text='👀 Экскурсия'),KeyboardButton(text='❓ Пока просто узнаю')]],resize_keyboard=True)
+
 async def notify_admin(text):
     chat_id=setting('admin_chat_id')
     if not chat_id: logger.warning('Admin has not started bot'); return
     try: await bot.send_message(chat_id,text)
     except Exception: logger.exception('Could not notify admin')
 
+# ---------- GROUP MODE ----------
+def is_group(m: Message) -> bool:
+    return m.chat.type in ('group','supergroup')
+
+def group_text(m: Message) -> str:
+    return (m.text or '').strip().lower()
+
+def is_group_command(m: Message, names) -> bool:
+    if not is_group(m): return False
+    text=group_text(m)
+    first=text.split()[0] if text else ''
+    command=first.split('@',1)[0]
+    return command in names
+
 @dp.message(CommandStart())
 async def start(message:Message,state:FSMContext):
     await state.clear()
-    if message.chat.type in ('group','supergroup'):
-        await message.answer('👋 <b>Добро пожаловать в группу CoolClass!</b>\n\nЗдесь можно узнать расписание, стоимость, задать вопрос школе или оставить заявку.\n\n<b>Команды:</b>\n/расписание — расписание\n/стоимость — стоимость\n/записаться — оставить заявку\n/вопрос — задать вопрос\n\n🔒 Личные данные (имя, возраст ребёнка, телефон) бот собирает только в личном чате.')
+    if is_group(message):
+        await message.answer('👋 <b>Добро пожаловать в группу CoolClass!</b>\n\nЗдесь можно узнать расписание, стоимость, задать вопрос школе или оставить заявку.\n\n<b>Команды:</b>\n/расписание — расписание\n/стоимость — стоимость\n/записаться — оставить заявку\n/вопрос — задать вопрос\n\n🔒 Личные данные бот собирает только в личном чате.')
         return
     if (message.from_user.username or '').lower()==ADMIN_USERNAME:
         set_setting('admin_chat_id',str(message.chat.id)); await message.answer('✅ Вы зарегистрированы как получатель заявок. Новые заявки будут приходить сюда.',reply_markup=menu()); return
     await message.answer('<b>Здравствуйте! Это CoolClass 👋</b>\n\nСемейная школа во Внуково для детей 1–5 классов. Небольшие классы 7–9 детей, математический уклон, английский и домашняя атмосфера.\n\nВыберите, что хотите узнать:',reply_markup=menu())
 
-def group_cmd(command_name, text):
-    return lambda m: m.chat.type in ('group','supergroup') and ((m.text or '').lower().split('@')[0] == command_name or (m.text or '').strip().lower()==text)
+@dp.message(lambda m: is_group_command(m, {'/расписание','/schedule'}))
+async def group_schedule(message:Message):
+    await message.answer('🕘 <b>Расписание CoolClass</b>\n\nПонедельник–пятница\n<b>09:00–18:00</b>\n\nЗанятия, питание, прогулки и дополнительные активности.')
 
-@dp.message(lambda m: m.chat.type in ('group','supergroup') and (m.text or '').lower().split('@')[0] in ('/расписание','/schedule'))
-async def group_schedule(message:Message): await message.answer('🕘 <b>Расписание CoolClass</b>\n\nПонедельник–пятница\n<b>09:00–18:00</b>\n\nЗанятия, питание, прогулки и дополнительные активности.')
-@dp.message(lambda m: m.chat.type in ('group','supergroup') and (m.text or '').lower().split('@')[0] in ('/стоимость','/price'))
-async def group_price(message:Message): await message.answer('💰 <b>Стоимость CoolClass</b>\n\n<b>65 000 ₽ в месяц</b>\n\nВсё включено, в том числе <b>трёхразовое питание</b>.')
-@dp.message(lambda m: m.chat.type in ('group','supergroup') and (m.text or '').lower().split('@')[0] in ('/записаться','/signup'))
-async def group_signup(message:Message): await message.answer('🎓 Чтобы оставить заявку, напишите мне в личные сообщения.\n\nТам бот конфиденциально запросит имя, возраст/класс ребёнка и телефон.\n\n👉 Откройте профиль бота и нажмите <b>Start</b>.')
-@dp.message(lambda m: m.chat.type in ('group','supergroup') and (m.text or '').lower().split('@')[0] in ('/вопрос','/question'))
-async def group_question(message:Message): await message.answer('❓ Задать вопрос школе можно в личном чате с ботом — так ваш вопрос и контактные данные останутся приватными.\n\n👉 Откройте профиль бота и напишите вопрос там.')
+@dp.message(lambda m: is_group_command(m, {'/стоимость','/price'}))
+async def group_price(message:Message):
+    await message.answer('💰 <b>Стоимость CoolClass</b>\n\n<b>65 000 ₽ в месяц</b>\n\nВсё включено, в том числе <b>трёхразовое питание</b>.')
 
-@dp.message(Command('cancel'))
-@dp.message(F.text=='↩️ Отмена')
+@dp.message(lambda m: is_group_command(m, {'/записаться','/signup'}))
+async def group_signup(message:Message):
+    await message.answer('🎓 <b>Чтобы оставить заявку</b>, откройте личный чат с @CoolclassVnukovobot и нажмите Start.\n\nТам бот конфиденциально запросит имя, возраст/класс ребёнка и телефон.')
+
+@dp.message(lambda m: is_group_command(m, {'/вопрос','/question'}))
+async def group_question(message:Message):
+    await message.answer('❓ Задать вопрос школе можно в личном чате с @CoolclassVnukovobot — так ваш вопрос и контактные данные останутся приватными.')
+
+# Also support the same actions when Telegram/client sends the text without a command entity.
+@dp.message(lambda m: is_group(m) and group_text(m) in ('расписание','🕘 расписание'))
+async def group_schedule_text(message:Message):
+    await group_schedule(message)
+
+@dp.message(lambda m: is_group(m) and group_text(m) in ('стоимость','💰 стоимость'))
+async def group_price_text(message:Message):
+    await group_price(message)
+
+@dp.message(lambda m: is_group(m) and group_text(m) in ('записаться','🎓 записаться'))
+async def group_signup_text(message:Message):
+    await group_signup(message)
+
+@dp.message(lambda m: is_group(m) and group_text(m) in ('вопрос','❓ вопрос'))
+async def group_question_text(message:Message):
+    await group_question(message)
+
+# Diagnostic fallback: if a normal text message reaches the bot in a group, confirm that it is online.
+@dp.message(lambda m: is_group(m) and bool(m.text))
+async def group_fallback(message:Message):
+    await message.answer('🤖 Я на связи. Используйте: /расписание, /стоимость, /записаться или /вопрос')
+
+# ---------- PRIVATE MODE ----------
+@dp.message(lambda m: not is_group(m) and (m.text == '/cancel' or m.text == '↩️ Отмена'))
 async def cancel(message:Message,state:FSMContext): await state.clear(); await message.answer('Заявка отменена.',reply_markup=menu())
-@dp.message(F.text=='🏫 О школе')
-async def about(message:Message): await message.answer('<b>CoolClass — семейная школа во Внуково</b> 🏫\n\n• 1–5 классы\n• классы 7–9 детей\n• математика каждый день\n• английский язык\n• отдельное здание\n• закрытая территория\n• прогулки\n• домашняя атмосфера\n• трёхразовое питание включено\n\nУчимся думать, а не просто заучивать, и развиваем самостоятельность.',reply_markup=menu())
-@dp.message(F.text=='📚 Программа')
-async def program(message:Message): await message.answer('<b>Программа</b> 📚\n\n🧮 Математика — каждый день, с акцентом на понимание и рассуждение.\n🇬🇧 Английский язык.\n📖 Основные предметы начальной школы.\n🧠 Самостоятельность и навыки планирования.\n\n1–5 классы.',reply_markup=menu())
-@dp.message(F.text=='🕘 Расписание')
-async def schedule(message:Message): await message.answer('<b>Расписание</b> 🕘\n\nПонедельник–пятница\n<b>09:00–18:00</b>\n\nЗанятия, питание, прогулки и дополнительные активности.',reply_markup=menu())
-@dp.message(F.text=='💰 Стоимость')
+@dp.message(lambda m: not is_group(m) and m.text=='🏫 О школе')
+async def about(message:Message): await message.answer('<b>CoolClass — семейная школа во Внуково</b> 🏫\n\n• 1–5 классы\n• группы 7–9 детей\n• математика каждый день\n• английский язык\n• отдельное здание\n• закрытая территория\n• прогулки\n• домашняя атмосфера\n• трёхразовое питание включено',reply_markup=menu())
+@dp.message(lambda m: not is_group(m) and m.text=='📚 Программа')
+async def program(message:Message): await message.answer('<b>Программа</b> 📚\n\n🧮 Математика — каждый день.\n🇬🇧 Английский язык.\n📖 Основные предметы начальной школы.\n🧠 Самостоятельность и навыки планирования.\n\n1–5 классы.',reply_markup=menu())
+@dp.message(lambda m: not is_group(m) and m.text=='🕘 Расписание')
+async def schedule(message:Message): await message.answer('<b>Расписание</b> 🕘\n\nПонедельник–пятница\n<b>09:00–18:00</b>',reply_markup=menu())
+@dp.message(lambda m: not is_group(m) and m.text=='💰 Стоимость')
 async def price(message:Message): await message.answer('<b>Стоимость</b> 💰\n\n<b>65 000 ₽ в месяц</b>\n\nВсё включено, в том числе <b>трёхразовое питание</b>.',reply_markup=menu())
-@dp.message(F.text=='📍 Как нас найти')
+@dp.message(lambda m: not is_group(m) and m.text=='📍 Как нас найти')
 async def location(message:Message): await message.answer('<b>CoolClass</b> 📍\n\nМосква, ул. Плотинная, 28\nВнуково\n\n📞 <a href="tel:+79296929208">+7 929 692-92-08</a>',reply_markup=menu())
-@dp.message(F.text=='🎓 Записаться')
+@dp.message(lambda m: not is_group(m) and m.text=='🎓 Записаться')
 async def begin(message:Message,state:FSMContext): await state.set_state(LeadForm.parent_name); await message.answer('Оставьте заявку — менеджер свяжется с вами.\n\n<b>Как вас зовут?</b>',reply_markup=ReplyKeyboardRemove())
 @dp.message(LeadForm.parent_name)
 async def name(message:Message,state:FSMContext):
@@ -100,15 +148,13 @@ async def interest(message:Message,state:FSMContext):
     d=await state.get_data(); d['interest']=message.text or 'Не указано'; d['username']=message.from_user.username or ''; save_lead(d); u=f"@{d['username']}" if d['username'] else 'нет username'
     await notify_admin('🔔 <b>Новая заявка CoolClass</b>\n\n'+f"👤 Родитель: {d['parent_name']}\n👧 Возраст/класс: {d['child_age']}\n📞 Телефон: {d['phone']}\n🎯 Интерес: {d['interest']}\n💬 Telegram: {u}\n🕐 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
     await state.clear(); await message.answer('<b>Спасибо! Заявка принята ✅</b>\n\nМенеджер CoolClass свяжется с вами.',reply_markup=menu())
-@dp.message(F.text=='❓ Задать вопрос')
+@dp.message(lambda m: not is_group(m) and m.text=='❓ Задать вопрос')
 async def qstart(message:Message,state:FSMContext): await state.set_state(LeadForm.question); await message.answer('Напишите ваш вопрос одним сообщением.',reply_markup=ReplyKeyboardRemove())
 @dp.message(LeadForm.question)
 async def question(message:Message,state:FSMContext):
     text=(message.text or '').strip()
     if not text: return await message.answer('Напишите вопрос текстом.')
     u=f"@{message.from_user.username}" if message.from_user.username else 'нет username'; await notify_admin(f'❓ <b>Вопрос от посетителя CoolClass</b>\n\n💬 Telegram: {u}\n👤 {message.from_user.full_name}\n\n{text}'); await state.clear(); await message.answer('Спасибо! Вопрос передан менеджеру.',reply_markup=menu())
-@dp.message(F.text)
-async def fallback(message:Message): await message.answer('Выберите пункт меню ниже.',reply_markup=menu())
 
 async def health(request): return web.json_response({'status':'ok','service':'coolclass-telegram-bot'})
 async def on_startup(bot_instance:Bot):
