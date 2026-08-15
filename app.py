@@ -1,167 +1,127 @@
-import logging
-import os
-import secrets
+import logging, os, secrets, sqlite3
 from datetime import datetime
-import sqlite3
 from aiohttp import web
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler
+from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-TOKEN = os.getenv("BOT_TOKEN", "").strip()
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Mikhail7890").lstrip("@").lower()
-PORT = int(os.getenv("PORT", "10000"))
-PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET") or secrets.token_urlsafe(32)
-DB_PATH = os.getenv("DB_PATH", "coolclass.db")
-if not TOKEN: raise RuntimeError("BOT_TOKEN is not set")
-if not PUBLIC_URL: raise RuntimeError("RENDER_EXTERNAL_URL is not available")
-logging.basicConfig(level=logging.INFO); logger=logging.getLogger(__name__)
-bot=Bot(token=TOKEN,default=DefaultBotProperties(parse_mode=ParseMode.HTML)); dp=Dispatcher(storage=MemoryStorage())
+TOKEN=os.getenv('BOT_TOKEN','').strip(); PORT=int(os.getenv('PORT','10000')); URL=os.getenv('RENDER_EXTERNAL_URL','').rstrip('/'); SECRET=os.getenv('WEBHOOK_SECRET') or secrets.token_urlsafe(24); ADMIN=os.getenv('ADMIN_USERNAME','Mikhail7890').lstrip('@').lower(); DB=os.getenv('DB_PATH','coolclass.db')
+if not TOKEN: raise RuntimeError('BOT_TOKEN is not set')
+if not URL: raise RuntimeError('RENDER_EXTERNAL_URL is not available')
+logging.basicConfig(level=logging.INFO); log=logging.getLogger('coolclass')
+bot=Bot(TOKEN,default=DefaultBotProperties(parse_mode=ParseMode.HTML)); dp=Dispatcher(storage=MemoryStorage())
 
-class LeadForm(StatesGroup):
-    parent_name=State(); child_age=State(); phone=State(); interest=State(); question=State()
+class Lead(StatesGroup): parent=State(); child=State(); phone=State(); interest=State(); question=State()
 
-def db():
-    conn=sqlite3.connect(DB_PATH); conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)"); conn.execute("CREATE TABLE IF NOT EXISTS leads (id INTEGER PRIMARY KEY AUTOINCREMENT,parent_name TEXT,child_age TEXT,phone TEXT,interest TEXT,telegram_username TEXT,created_at TEXT)"); conn.commit(); return conn
+def conn():
+ c=sqlite3.connect(DB); c.execute('CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT NOT NULL)'); c.commit(); return c
 
-def setting(key):
-    conn=db(); row=conn.execute("SELECT value FROM settings WHERE key=?",(key,)).fetchone(); conn.close(); return row[0] if row else None
+def get(k):
+ c=conn(); r=c.execute('SELECT v FROM settings WHERE k=?',(k,)).fetchone(); c.close(); return r[0] if r else None
 
-def set_setting(key,value):
-    conn=db(); conn.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(key,value)); conn.commit(); conn.close()
-
-def save_lead(d):
-    conn=db(); conn.execute("INSERT INTO leads(parent_name,child_age,phone,interest,telegram_username,created_at) VALUES(?,?,?,?,?,?)",(d['parent_name'],d['child_age'],d['phone'],d['interest'],d.get('username',''),datetime.now().isoformat(timespec='seconds'))); conn.commit(); conn.close()
+def put(k,v):
+ c=conn(); c.execute('INSERT INTO settings(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v',(k,v)); c.commit(); c.close()
 
 def menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='🏫 О школе'),KeyboardButton(text='📚 Программа')],[KeyboardButton(text='🕘 Расписание'),KeyboardButton(text='💰 Стоимость')],[KeyboardButton(text='📍 Как нас найти'),KeyboardButton(text='🎓 Записаться')],[KeyboardButton(text='❓ Задать вопрос')]],resize_keyboard=True)
-def contact_menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='📱 Отправить номер телефона',request_contact=True)],[KeyboardButton(text='↩️ Отмена')]],resize_keyboard=True,one_time_keyboard=True)
+def phone_menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='📱 Отправить номер телефона',request_contact=True)],[KeyboardButton(text='↩️ Отмена')]],resize_keyboard=True,one_time_keyboard=True)
 def interest_menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='🎓 Поступление'),KeyboardButton(text='🏫 Перевод в школу')],[KeyboardButton(text='👀 Экскурсия'),KeyboardButton(text='❓ Пока просто узнаю')]],resize_keyboard=True)
+async def admin(text):
+ cid=get('admin_chat_id')
+ if cid:
+  try: await bot.send_message(cid,text)
+  except Exception: log.exception('admin notification failed')
+ else: log.warning('admin_chat_id is empty; owner must press /start')
 
-async def notify_admin(text):
-    chat_id=setting('admin_chat_id')
-    if not chat_id: logger.warning('Admin has not started bot'); return
-    try: await bot.send_message(chat_id,text)
-    except Exception: logger.exception('Could not notify admin')
-
-# ---------- GROUP MODE ----------
-def is_group(m: Message) -> bool:
-    return m.chat.type in ('group','supergroup')
-
-def group_text(m: Message) -> str:
-    return (m.text or '').strip().lower()
-
-def is_group_command(m: Message, names) -> bool:
-    if not is_group(m): return False
-    text=group_text(m)
-    first=text.split()[0] if text else ''
-    command=first.split('@',1)[0]
-    return command in names
+def group(m): return m.chat.type in ('group','supergroup')
+def cmd(text):
+ s=(text or '').strip().lower(); return (s.split()[0].split('@')[0] if s else '')
 
 @dp.message(CommandStart())
-async def start(message:Message,state:FSMContext):
-    await state.clear()
-    if is_group(message):
-        await message.answer('👋 <b>Добро пожаловать в группу CoolClass!</b>\n\nЗдесь можно узнать расписание, стоимость, задать вопрос школе или оставить заявку.\n\n<b>Команды:</b>\n/расписание — расписание\n/стоимость — стоимость\n/записаться — оставить заявку\n/вопрос — задать вопрос\n\n🔒 Личные данные бот собирает только в личном чате.')
-        return
-    if (message.from_user.username or '').lower()==ADMIN_USERNAME:
-        set_setting('admin_chat_id',str(message.chat.id)); await message.answer('✅ Вы зарегистрированы как получатель заявок. Новые заявки будут приходить сюда.',reply_markup=menu()); return
-    await message.answer('<b>Здравствуйте! Это CoolClass 👋</b>\n\nСемейная школа во Внуково для детей 1–5 классов. Небольшие классы 7–9 детей, математический уклон, английский и домашняя атмосфера.\n\nВыберите, что хотите узнать:',reply_markup=menu())
+async def start(m:Message,state:FSMContext):
+ await state.clear()
+ if group(m): return await m.answer('👋 <b>Добро пожаловать в группу CoolClass!</b>\n\n/расписание — расписание\n/стоимость — стоимость\n/записаться — заявка\n/вопрос — вопрос\n\n🔒 Телефон и данные ребёнка собираются только в личном чате.')
+ if (m.from_user.username or '').lower()==ADMIN:
+  put('admin_chat_id',str(m.chat.id)); return await m.answer('✅ Вы зарегистрированы. Новые заявки будут приходить сюда.',reply_markup=menu())
+ await m.answer('<b>Здравствуйте! Это CoolClass 👋</b>\n\nСемейная школа во Внуково, 1–5 классы, группы 7–9 детей, математический уклон.\n\nВыберите раздел:',reply_markup=menu())
 
-@dp.message(lambda m: is_group_command(m, {'/расписание','/schedule'}))
-async def group_schedule(message:Message):
-    await message.answer('🕘 <b>Расписание CoolClass</b>\n\nПонедельник–пятница\n<b>09:00–18:00</b>\n\nЗанятия, питание, прогулки и дополнительные активности.')
+async def schedule(m): await m.answer('🕘 <b>Расписание</b>\n\nПонедельник–пятница\n<b>09:00–18:00</b>')
+async def price(m): await m.answer('💰 <b>Стоимость</b>\n\n<b>65 000 ₽ в месяц</b>\n\nВсё включено, в том числе <b>трёхразовое питание</b>.')
+async def signup(m): await m.answer('🎓 <b>Заявка</b>\n\nОткройте личный чат с @CoolclassVnukovobot и нажмите Start. Личные данные собираются только там.')
+async def question_info(m): await m.answer('❓ Задайте вопрос в личном чате с @CoolclassVnukovobot — так контактные данные останутся приватными.')
 
-@dp.message(lambda m: is_group_command(m, {'/стоимость','/price'}))
-async def group_price(message:Message):
-    await message.answer('💰 <b>Стоимость CoolClass</b>\n\n<b>65 000 ₽ в месяц</b>\n\nВсё включено, в том числе <b>трёхразовое питание</b>.')
+@dp.message(lambda m: group(m) and cmd(m.text) in {'/расписание','/schedule'})
+async def gs(m): await schedule(m)
+@dp.message(lambda m: group(m) and cmd(m.text) in {'/стоимость','/price'})
+async def gp(m): await price(m)
+@dp.message(lambda m: group(m) and cmd(m.text) in {'/записаться','/signup'})
+async def gu(m): await signup(m)
+@dp.message(lambda m: group(m) and cmd(m.text) in {'/вопрос','/question'})
+async def gq(m): await question_info(m)
+@dp.message(lambda m: group(m) and (m.text or '').strip().lower() in {'расписание','стоимость','записаться','вопрос'})
+async def gt(m):
+ t=(m.text or '').strip().lower(); return await {'расписание':schedule,'стоимость':price,'записаться':signup,'вопрос':question_info}[t](m)
+@dp.message(lambda m: group(m) and bool(m.text))
+async def fallback(m): await m.answer('🤖 Я на связи. Используйте /расписание, /стоимость, /записаться или /вопрос')
 
-@dp.message(lambda m: is_group_command(m, {'/записаться','/signup'}))
-async def group_signup(message:Message):
-    await message.answer('🎓 <b>Чтобы оставить заявку</b>, откройте личный чат с @CoolclassVnukovobot и нажмите Start.\n\nТам бот конфиденциально запросит имя, возраст/класс ребёнка и телефон.')
+# Telegram channel posts are a separate update type.
+def chcmd(text): return cmd(text)
+@dp.channel_post(lambda m: chcmd(m.text) in {'/расписание','/schedule'})
+async def cs(m:Message): await schedule(m)
+@dp.channel_post(lambda m: chcmd(m.text) in {'/стоимость','/price'})
+async def cp(m:Message): await price(m)
+@dp.channel_post(lambda m: chcmd(m.text) in {'/записаться','/signup'})
+async def cu(m:Message): await signup(m)
+@dp.channel_post(lambda m: chcmd(m.text) in {'/вопрос','/question'})
+async def cq(m:Message): await question_info(m)
 
-@dp.message(lambda m: is_group_command(m, {'/вопрос','/question'}))
-async def group_question(message:Message):
-    await message.answer('❓ Задать вопрос школе можно в личном чате с @CoolclassVnukovobot — так ваш вопрос и контактные данные останутся приватными.')
+@dp.message(lambda m: not group(m) and m.text=='🏫 О школе')
+async def about(m): await m.answer('<b>CoolClass — семейная школа во Внуково</b> 🏫\n\n1–5 классы\nГруппы 7–9 детей\nМатематика каждый день\nАнглийский\nОтдельное здание\nЗакрытая территория\nПрогулки\nТрёхразовое питание включено',reply_markup=menu())
+@dp.message(lambda m: not group(m) and m.text=='📚 Программа')
+async def program(m): await m.answer('<b>Программа</b> 📚\n\nМатематика каждый день, английский язык, основные предметы, развитие самостоятельности.\n\n1–5 классы.',reply_markup=menu())
+@dp.message(lambda m: not group(m) and m.text=='🕘 Расписание')
+async def ps(m): await schedule(m)
+@dp.message(lambda m: not group(m) and m.text=='💰 Стоимость')
+async def pp(m): await price(m)
+@dp.message(lambda m: not group(m) and m.text=='📍 Как нас найти')
+async def loc(m): await m.answer('<b>CoolClass</b> 📍\n\nМосква, ул. Плотинная, 28\nВнуково\n📞 +7 929 692-92-08',reply_markup=menu())
+@dp.message(lambda m: not group(m) and m.text=='🎓 Записаться')
+async def begin(m,state): await state.set_state(Lead.parent); await m.answer('Оставьте заявку.\n\n<b>Как вас зовут?</b>',reply_markup=ReplyKeyboardRemove())
+@dp.message(Lead.parent)
+async def parent(m,state): await state.update_data(parent=m.text or ''); await state.set_state(Lead.child); await m.answer('<b>Возраст или класс ребёнка?</b>')
+@dp.message(Lead.child)
+async def child(m,state): await state.update_data(child=m.text or ''); await state.set_state(Lead.phone); await m.answer('<b>Номер телефона:</b>',reply_markup=phone_menu())
+@dp.message(Lead.phone)
+async def phone(m,state):
+ p=m.contact.phone_number if m.contact else (m.text or '').strip()
+ if len(p)<7: return await m.answer('Пожалуйста, отправьте номер телефона кнопкой ниже.',reply_markup=phone_menu())
+ await state.update_data(phone=p); await state.set_state(Lead.interest); await m.answer('<b>Что вас интересует?</b>',reply_markup=interest_menu())
+@dp.message(Lead.interest)
+async def interest(m,state):
+ d=await state.get_data(); d['interest']=m.text or ''; u='@'+m.from_user.username if m.from_user.username else 'нет username'
+ await admin('🔔 <b>Новая заявка CoolClass</b>\n\n👤 '+d.get('parent','')+'\n👧 '+d.get('child','')+'\n📞 '+d.get('phone','')+'\n🎯 '+d.get('interest','')+'\n💬 '+u+'\n🕐 '+datetime.now().strftime('%d.%m.%Y %H:%M:%S'))
+ await state.clear(); await m.answer('✅ <b>Заявка принята!</b> Менеджер свяжется с вами.',reply_markup=menu())
+@dp.message(lambda m: not group(m) and m.text=='❓ Задать вопрос')
+async def qstart(m,state): await state.set_state(Lead.question); await m.answer('Напишите ваш вопрос.',reply_markup=ReplyKeyboardRemove())
+@dp.message(Lead.question)
+async def q(m,state):
+ u='@'+m.from_user.username if m.from_user.username else 'нет username'; await admin('❓ <b>Вопрос</b>\n\n'+u+'\n'+(m.text or '')); await state.clear(); await m.answer('Спасибо! Вопрос передан менеджеру.',reply_markup=menu())
 
-# Also support the same actions when Telegram/client sends the text without a command entity.
-@dp.message(lambda m: is_group(m) and group_text(m) in ('расписание','🕘 расписание'))
-async def group_schedule_text(message:Message):
-    await group_schedule(message)
+async def health(r): return web.json_response({'status':'ok','bot':'CoolClass'})
+async def startup(*a,**kw):
+ conn().close(); me=await bot.get_me(); log.info('BOT OK @%s id=%s',me.username,me.id)
+ await bot.set_my_commands([{'command':'start','description':'Начать'},{'command':'расписание','description':'Расписание'},{'command':'стоимость','description':'Стоимость'},{'command':'записаться','description':'Оставить заявку'},{'command':'вопрос','description':'Задать вопрос'}])
+ await bot.set_webhook(url=URL+'/webhook',secret_token=SECRET,drop_pending_updates=False,allowed_updates=['message','channel_post'])
+ info=await bot.get_webhook_info(); log.info('WEBHOOK=%s pending=%s allowed=%s',info.url,info.pending_update_count,info.allowed_updates)
+async def shutdown(*a,**kw): await bot.delete_webhook(drop_pending_updates=False); await bot.session.close()
 
-@dp.message(lambda m: is_group(m) and group_text(m) in ('стоимость','💰 стоимость'))
-async def group_price_text(message:Message):
-    await group_price(message)
+app=web.Application(); app.router.add_get('/',health); app.router.add_get('/health',health)
+handler=SimpleRequestHandler(dispatcher=dp,bot=bot,secret_token=SECRET); handler.register(app,path='/webhook'); setup_application(app,dp,bot=bot)
+dp.startup.register(startup); dp.shutdown.register(shutdown)
 
-@dp.message(lambda m: is_group(m) and group_text(m) in ('записаться','🎓 записаться'))
-async def group_signup_text(message:Message):
-    await group_signup(message)
-
-@dp.message(lambda m: is_group(m) and group_text(m) in ('вопрос','❓ вопрос'))
-async def group_question_text(message:Message):
-    await group_question(message)
-
-# Diagnostic fallback: if a normal text message reaches the bot in a group, confirm that it is online.
-@dp.message(lambda m: is_group(m) and bool(m.text))
-async def group_fallback(message:Message):
-    await message.answer('🤖 Я на связи. Используйте: /расписание, /стоимость, /записаться или /вопрос')
-
-# ---------- PRIVATE MODE ----------
-@dp.message(lambda m: not is_group(m) and (m.text == '/cancel' or m.text == '↩️ Отмена'))
-async def cancel(message:Message,state:FSMContext): await state.clear(); await message.answer('Заявка отменена.',reply_markup=menu())
-@dp.message(lambda m: not is_group(m) and m.text=='🏫 О школе')
-async def about(message:Message): await message.answer('<b>CoolClass — семейная школа во Внуково</b> 🏫\n\n• 1–5 классы\n• группы 7–9 детей\n• математика каждый день\n• английский язык\n• отдельное здание\n• закрытая территория\n• прогулки\n• домашняя атмосфера\n• трёхразовое питание включено',reply_markup=menu())
-@dp.message(lambda m: not is_group(m) and m.text=='📚 Программа')
-async def program(message:Message): await message.answer('<b>Программа</b> 📚\n\n🧮 Математика — каждый день.\n🇬🇧 Английский язык.\n📖 Основные предметы начальной школы.\n🧠 Самостоятельность и навыки планирования.\n\n1–5 классы.',reply_markup=menu())
-@dp.message(lambda m: not is_group(m) and m.text=='🕘 Расписание')
-async def schedule(message:Message): await message.answer('<b>Расписание</b> 🕘\n\nПонедельник–пятница\n<b>09:00–18:00</b>',reply_markup=menu())
-@dp.message(lambda m: not is_group(m) and m.text=='💰 Стоимость')
-async def price(message:Message): await message.answer('<b>Стоимость</b> 💰\n\n<b>65 000 ₽ в месяц</b>\n\nВсё включено, в том числе <b>трёхразовое питание</b>.',reply_markup=menu())
-@dp.message(lambda m: not is_group(m) and m.text=='📍 Как нас найти')
-async def location(message:Message): await message.answer('<b>CoolClass</b> 📍\n\nМосква, ул. Плотинная, 28\nВнуково\n\n📞 <a href="tel:+79296929208">+7 929 692-92-08</a>',reply_markup=menu())
-@dp.message(lambda m: not is_group(m) and m.text=='🎓 Записаться')
-async def begin(message:Message,state:FSMContext): await state.set_state(LeadForm.parent_name); await message.answer('Оставьте заявку — менеджер свяжется с вами.\n\n<b>Как вас зовут?</b>',reply_markup=ReplyKeyboardRemove())
-@dp.message(LeadForm.parent_name)
-async def name(message:Message,state:FSMContext):
-    if not message.text or len(message.text.strip())<2: return await message.answer('Пожалуйста, напишите ваше имя.')
-    await state.update_data(parent_name=message.text.strip()); await state.set_state(LeadForm.child_age); await message.answer('<b>Сколько лет ребёнку?</b> Например: «7 лет» или «2 класс».')
-@dp.message(LeadForm.child_age)
-async def age(message:Message,state:FSMContext):
-    if not message.text: return await message.answer('Укажите возраст или класс ребёнка.')
-    await state.update_data(child_age=message.text.strip()); await state.set_state(LeadForm.phone); await message.answer('<b>Оставьте номер телефона</b>.',reply_markup=contact_menu())
-@dp.message(LeadForm.phone,F.contact)
-async def phone_contact(message:Message,state:FSMContext): await state.update_data(phone=message.contact.phone_number); await state.set_state(LeadForm.interest); await message.answer('<b>Что вас сейчас интересует?</b>',reply_markup=interest_menu())
-@dp.message(LeadForm.phone)
-async def phone_text(message:Message,state:FSMContext):
-    text=(message.text or '').strip()
-    if len(text)<7: return await message.answer('Отправьте корректный номер кнопкой ниже.',reply_markup=contact_menu())
-    await state.update_data(phone=text); await state.set_state(LeadForm.interest); await message.answer('<b>Что вас сейчас интересует?</b>',reply_markup=interest_menu())
-@dp.message(LeadForm.interest)
-async def interest(message:Message,state:FSMContext):
-    d=await state.get_data(); d['interest']=message.text or 'Не указано'; d['username']=message.from_user.username or ''; save_lead(d); u=f"@{d['username']}" if d['username'] else 'нет username'
-    await notify_admin('🔔 <b>Новая заявка CoolClass</b>\n\n'+f"👤 Родитель: {d['parent_name']}\n👧 Возраст/класс: {d['child_age']}\n📞 Телефон: {d['phone']}\n🎯 Интерес: {d['interest']}\n💬 Telegram: {u}\n🕐 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
-    await state.clear(); await message.answer('<b>Спасибо! Заявка принята ✅</b>\n\nМенеджер CoolClass свяжется с вами.',reply_markup=menu())
-@dp.message(lambda m: not is_group(m) and m.text=='❓ Задать вопрос')
-async def qstart(message:Message,state:FSMContext): await state.set_state(LeadForm.question); await message.answer('Напишите ваш вопрос одним сообщением.',reply_markup=ReplyKeyboardRemove())
-@dp.message(LeadForm.question)
-async def question(message:Message,state:FSMContext):
-    text=(message.text or '').strip()
-    if not text: return await message.answer('Напишите вопрос текстом.')
-    u=f"@{message.from_user.username}" if message.from_user.username else 'нет username'; await notify_admin(f'❓ <b>Вопрос от посетителя CoolClass</b>\n\n💬 Telegram: {u}\n👤 {message.from_user.full_name}\n\n{text}'); await state.clear(); await message.answer('Спасибо! Вопрос передан менеджеру.',reply_markup=menu())
-
-async def health(request): return web.json_response({'status':'ok','service':'coolclass-telegram-bot'})
-async def on_startup(bot_instance:Bot):
-    db().close(); info=await bot_instance.get_me(); logger.info('Telegram bot authenticated: @%s',info.username); await bot_instance.set_webhook(url=f'{PUBLIC_URL}{WEBHOOK_PATH}',secret_token=WEBHOOK_SECRET,drop_pending_updates=False); webhook=await bot_instance.get_webhook_info(); logger.info('Webhook registered: %s pending=%s',webhook.url,webhook.pending_update_count)
-async def on_shutdown(bot_instance:Bot): logger.info('CoolClass bot shutting down')
-async def startup(app:web.Application): await on_startup(bot)
-async def shutdown(app:web.Application): await on_shutdown(bot); await bot.session.close()
-def create_app():
-    app=web.Application(); app.router.add_get('/',health); app.router.add_get('/health',health); handler=SimpleRequestHandler(dispatcher=dp,bot=bot,secret_token=WEBHOOK_SECRET,handle_in_background=True); handler.register(app,path=WEBHOOK_PATH); app.on_startup.append(startup); app.on_cleanup.append(shutdown); return app
-if __name__=='__main__': web.run_app(create_app(),host='0.0.0.0',port=PORT)
+if __name__=='__main__': web.run_app(app,host='0.0.0.0',port=PORT)
