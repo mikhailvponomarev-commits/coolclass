@@ -21,55 +21,49 @@ PUBLIC_URL = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET") or secrets.token_urlsafe(32)
 DB_PATH = os.getenv("DB_PATH", "coolclass.db")
-if not TOKEN:
-    raise RuntimeError("BOT_TOKEN is not set")
-if not PUBLIC_URL:
-    raise RuntimeError("RENDER_EXTERNAL_URL is not available")
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher(storage=MemoryStorage())
-
-class LeadForm(StatesGroup):
-    parent_name = State(); child_age = State(); phone = State(); interest = State(); question = State()
-
+if not TOKEN: raise RuntimeError("BOT_TOKEN is not set")
+if not PUBLIC_URL: raise RuntimeError("RENDER_EXTERNAL_URL is not available")
+logging.basicConfig(level=logging.INFO); logger=logging.getLogger(__name__)
+bot=Bot(token=TOKEN,default=DefaultBotProperties(parse_mode=ParseMode.HTML)); dp=Dispatcher(storage=MemoryStorage())
+class LeadForm(StatesGroup): parent_name=State(); child_age=State(); phone=State(); interest=State(); question=State()
 def db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-    conn.execute("CREATE TABLE IF NOT EXISTS leads (id INTEGER PRIMARY KEY AUTOINCREMENT,parent_name TEXT,child_age TEXT,phone TEXT,interest TEXT,telegram_username TEXT,created_at TEXT)")
-    conn.commit()
-    return conn
-
+    conn=sqlite3.connect(DB_PATH); conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)"); conn.execute("CREATE TABLE IF NOT EXISTS leads (id INTEGER PRIMARY KEY AUTOINCREMENT,parent_name TEXT,child_age TEXT,phone TEXT,interest TEXT,telegram_username TEXT,created_at TEXT)"); conn.commit(); return conn
 def setting(key):
     conn=db(); row=conn.execute("SELECT value FROM settings WHERE key=?",(key,)).fetchone(); conn.close(); return row[0] if row else None
-
 def set_setting(key,value):
     conn=db(); conn.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(key,value)); conn.commit(); conn.close()
-
 def save_lead(d):
     conn=db(); conn.execute("INSERT INTO leads(parent_name,child_age,phone,interest,telegram_username,created_at) VALUES(?,?,?,?,?,?)",(d['parent_name'],d['child_age'],d['phone'],d['interest'],d.get('username',''),datetime.now().isoformat(timespec='seconds'))); conn.commit(); conn.close()
-
-def menu():
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='🏫 О школе'),KeyboardButton(text='📚 Программа')],[KeyboardButton(text='🕘 Расписание'),KeyboardButton(text='💰 Стоимость')],[KeyboardButton(text='📍 Как нас найти'),KeyboardButton(text='🎓 Записаться')],[KeyboardButton(text='❓ Задать вопрос')]],resize_keyboard=True)
-
+def menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='🏫 О школе'),KeyboardButton(text='📚 Программа')],[KeyboardButton(text='🕘 Расписание'),KeyboardButton(text='💰 Стоимость')],[KeyboardButton(text='📍 Как нас найти'),KeyboardButton(text='🎓 Записаться')],[KeyboardButton(text='❓ Задать вопрос')]],resize_keyboard=True)
 def contact_menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='📱 Отправить номер телефона',request_contact=True)],[KeyboardButton(text='↩️ Отмена')]],resize_keyboard=True,one_time_keyboard=True)
 def interest_menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='🎓 Поступление'),KeyboardButton(text='🏫 Перевод в школу')],[KeyboardButton(text='👀 Экскурсия'),KeyboardButton(text='❓ Пока просто узнаю')]],resize_keyboard=True)
-
 async def notify_admin(text):
     chat_id=setting('admin_chat_id')
-    if not chat_id:
-        logger.warning('Admin has not started bot')
-        return
+    if not chat_id: logger.warning('Admin has not started bot'); return
     try: await bot.send_message(chat_id,text)
     except Exception: logger.exception('Could not notify admin')
 
 @dp.message(CommandStart())
 async def start(message:Message,state:FSMContext):
     await state.clear()
+    if message.chat.type in ('group','supergroup'):
+        await message.answer('👋 <b>Добро пожаловать в группу CoolClass!</b>\n\nЗдесь можно узнать расписание, стоимость, задать вопрос школе или оставить заявку.\n\n<b>Команды:</b>\n/расписание — расписание\n/стоимость — стоимость\n/записаться — оставить заявку\n/вопрос — задать вопрос\n\n🔒 Личные данные (имя, возраст ребёнка, телефон) бот собирает только в личном чате.')
+        return
     if (message.from_user.username or '').lower()==ADMIN_USERNAME:
         set_setting('admin_chat_id',str(message.chat.id)); await message.answer('✅ Вы зарегистрированы как получатель заявок. Новые заявки будут приходить сюда.',reply_markup=menu()); return
     await message.answer('<b>Здравствуйте! Это CoolClass 👋</b>\n\nСемейная школа во Внуково для детей 1–5 классов. Небольшие классы 7–9 детей, математический уклон, английский и домашняя атмосфера.\n\nВыберите, что хотите узнать:',reply_markup=menu())
+
+def group_cmd(command_name, text):
+    return lambda m: m.chat.type in ('group','supergroup') and ((m.text or '').lower().split('@')[0] == command_name or (m.text or '').strip().lower()==text)
+
+@dp.message(lambda m: m.chat.type in ('group','supergroup') and (m.text or '').lower().split('@')[0] in ('/расписание','/schedule'))
+async def group_schedule(message:Message): await message.answer('🕘 <b>Расписание CoolClass</b>\n\nПонедельник–пятница\n<b>09:00–18:00</b>\n\nЗанятия, питание, прогулки и дополнительные активности.')
+@dp.message(lambda m: m.chat.type in ('group','supergroup') and (m.text or '').lower().split('@')[0] in ('/стоимость','/price'))
+async def group_price(message:Message): await message.answer('💰 <b>Стоимость CoolClass</b>\n\n<b>65 000 ₽ в месяц</b>\n\nВсё включено, в том числе <b>трёхразовое питание</b>.')
+@dp.message(lambda m: m.chat.type in ('group','supergroup') and (m.text or '').lower().split('@')[0] in ('/записаться','/signup'))
+async def group_signup(message:Message): await message.answer('🎓 Чтобы оставить заявку, напишите мне в личные сообщения.\n\nТам бот конфиденциально запросит имя, возраст/класс ребёнка и телефон.\n\n👉 Откройте профиль бота и нажмите <b>Start</b>.')
+@dp.message(lambda m: m.chat.type in ('group','supergroup') and (m.text or '').lower().split('@')[0] in ('/вопрос','/question'))
+async def group_question(message:Message): await message.answer('❓ Задать вопрос школе можно в личном чате с ботом — так ваш вопрос и контактные данные останутся приватными.\n\n👉 Откройте профиль бота и напишите вопрос там.')
 
 @dp.message(Command('cancel'))
 @dp.message(F.text=='↩️ Отмена')
@@ -117,22 +111,11 @@ async def question(message:Message,state:FSMContext):
 async def fallback(message:Message): await message.answer('Выберите пункт меню ниже.',reply_markup=menu())
 
 async def health(request): return web.json_response({'status':'ok','service':'coolclass-telegram-bot'})
-
-async def on_startup(bot_instance: Bot):
-    db().close()
-    info = await bot_instance.get_me()
-    logger.info('Telegram bot authenticated: @%s', info.username)
-    await bot_instance.set_webhook(url=f'{PUBLIC_URL}{WEBHOOK_PATH}', secret_token=WEBHOOK_SECRET, drop_pending_updates=False)
-    webhook = await bot_instance.get_webhook_info()
-    logger.info('Webhook registered: %s pending=%s', webhook.url, webhook.pending_update_count)
-
-async def on_shutdown(bot_instance: Bot): logger.info('CoolClass bot shutting down')
-async def startup(app: web.Application): await on_startup(bot)
-async def shutdown(app: web.Application): await on_shutdown(bot); await bot.session.close()
-
+async def on_startup(bot_instance:Bot):
+    db().close(); info=await bot_instance.get_me(); logger.info('Telegram bot authenticated: @%s',info.username); await bot_instance.set_webhook(url=f'{PUBLIC_URL}{WEBHOOK_PATH}',secret_token=WEBHOOK_SECRET,drop_pending_updates=False); webhook=await bot_instance.get_webhook_info(); logger.info('Webhook registered: %s pending=%s',webhook.url,webhook.pending_update_count)
+async def on_shutdown(bot_instance:Bot): logger.info('CoolClass bot shutting down')
+async def startup(app:web.Application): await on_startup(bot)
+async def shutdown(app:web.Application): await on_shutdown(bot); await bot.session.close()
 def create_app():
-    app=web.Application(); app.router.add_get('/',health); app.router.add_get('/health',health)
-    handler=SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET, handle_in_background=True); handler.register(app,path=WEBHOOK_PATH)
-    app.on_startup.append(startup); app.on_cleanup.append(shutdown); return app
-
+    app=web.Application(); app.router.add_get('/',health); app.router.add_get('/health',health); handler=SimpleRequestHandler(dispatcher=dp,bot=bot,secret_token=WEBHOOK_SECRET,handle_in_background=True); handler.register(app,path=WEBHOOK_PATH); app.on_startup.append(startup); app.on_cleanup.append(shutdown); return app
 if __name__=='__main__': web.run_app(create_app(),host='0.0.0.0',port=PORT)
