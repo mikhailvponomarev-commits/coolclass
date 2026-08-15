@@ -1,0 +1,73 @@
+name: One-time Telegram channel support fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch app.py for channel posts and explicit webhook updates
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('app.py')
+          s = p.read_text(encoding='utf-8')
+          if '# ---------- CHANNEL MODE ----------' not in s:
+              marker = '# ---------- PRIVATE MODE ----------'
+              block = r'''# ---------- CHANNEL MODE ----------
+# Telegram channels deliver posts through dp.channel_post, not dp.message.
+def is_channel_command(message: Message, names) -> bool:
+    text = (message.text or '').strip().lower()
+    if not text:
+        return False
+    first = text.split()[0]
+    return first.split('@', 1)[0] in names
+
+@dp.channel_post(lambda m: is_channel_command(m, {'/расписание','/schedule'}))
+async def channel_schedule(message: Message):
+    await bot.send_message(message.chat.id, '🕘 <b>Расписание CoolClass</b>\\n\\nПонедельник–пятница\\n<b>09:00–18:00</b>\\n\\nЗанятия, питание, прогулки и дополнительные активности.')
+
+@dp.channel_post(lambda m: is_channel_command(m, {'/стоимость','/price'}))
+async def channel_price(message: Message):
+    await bot.send_message(message.chat.id, '💰 <b>Стоимость CoolClass</b>\\n\\n<b>65 000 ₽ в месяц</b>\\n\\nВсё включено, в том числе <b>трёхразовое питание</b>.')
+
+@dp.channel_post(lambda m: is_channel_command(m, {'/записаться','/signup'}))
+async def channel_signup(message: Message):
+    await bot.send_message(message.chat.id, '🎓 <b>Записаться</b>\\n\\nОткройте личный чат с @CoolclassVnukovobot и нажмите Start. Личные данные собираются только в личном чате.')
+
+@dp.channel_post(lambda m: is_channel_command(m, {'/вопрос','/question'}))
+async def channel_question(message: Message):
+    await bot.send_message(message.chat.id, '❓ Задать вопрос школе можно в личном чате с @CoolclassVnukovobot.')
+
+'''
+              s = s.replace(marker, block + marker)
+          old = "await bot_instance.set_webhook(url=f'{PUBLIC_URL}{WEBHOOK_PATH}',secret_token=WEBHOOK_SECRET,drop_pending_updates=False)"
+          new = "await bot_instance.set_webhook(url=f'{PUBLIC_URL}{WEBHOOK_PATH}',secret_token=WEBHOOK_SECRET,drop_pending_updates=False,allowed_updates=dp.resolve_used_update_types())"
+          s = s.replace(old, new)
+          p.write_text(s, encoding='utf-8')
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app.py
+          if git diff --cached --quiet; then
+            echo 'No patch needed'
+            exit 0
+          fi
+          git commit -m 'Support Telegram channel posts and webhook update types'
+          git push
+      - name: Remove one-time workflow
+        if: success()
+        run: |
+          rm -f .github/workflows/one-time-channel-fix.yml
+          git add .github/workflows/one-time-channel-fix.yml
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Remove one-time channel fix workflow'
+          git push
