@@ -69,6 +69,7 @@ async def gt(m):
 @dp.message(lambda m: group(m) and bool(m.text))
 async def fallback(m): await m.answer('🤖 Я на связи. Используйте /расписание, /стоимость, /записаться или /вопрос')
 
+# Telegram channel posts are a separate update type.
 def chcmd(text): return cmd(text)
 @dp.channel_post(lambda m: chcmd(m.text) in {'/расписание','/schedule'})
 async def cs(m:Message): await schedule(m)
@@ -114,7 +115,7 @@ async def q(m,state):
 async def health(r): return web.json_response({'status':'ok','bot':'CoolClass'})
 async def startup(*a,**kw):
  conn().close(); me=await bot.get_me(); log.info('BOT OK @%s id=%s',me.username,me.id)
- # Do not call set_my_commands here: Telegram rejects non-Latin command names and that would crash startup.
+ await bot.set_my_commands([{'command':'start','description':'Начать'},{'command':'расписание','description':'Расписание'},{'command':'стоимость','description':'Стоимость'},{'command':'записаться','description':'Оставить заявку'},{'command':'вопрос','description':'Задать вопрос'}])
  await bot.set_webhook(url=URL+'/webhook',secret_token=SECRET,drop_pending_updates=False,allowed_updates=['message','channel_post'])
  info=await bot.get_webhook_info(); log.info('WEBHOOK=%s pending=%s allowed=%s',info.url,info.pending_update_count,info.allowed_updates)
 async def shutdown(*a,**kw): await bot.delete_webhook(drop_pending_updates=False); await bot.session.close()
