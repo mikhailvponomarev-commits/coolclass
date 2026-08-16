@@ -41,6 +41,8 @@ async def admin(text):
 def group(m): return m.chat.type in ('group','supergroup')
 def cmd(text):
  s=(text or '').strip().lower(); return (s.split()[0].split('@')[0] if s else '')
+def norm(text):
+ return ' '.join((text or '').replace('\ufe0f','').replace('\u200d','').split()).strip().lower()
 
 @dp.message(CommandStart())
 async def start(m:Message,state:FSMContext):
@@ -79,17 +81,17 @@ async def cu(m:Message): await signup(m)
 @dp.channel_post(lambda m: chcmd(m.text) in {'/вопрос','/question'})
 async def cq(m:Message): await question_info(m)
 
-@dp.message(lambda m: not group(m) and m.text=='🏫 О школе')
+@dp.message(lambda m: not group(m) and norm(m.text)=='🏫 о школе')
 async def about(m): await m.answer('<b>CoolClass — семейная школа во Внуково</b> 🏫\n\n1–5 классы\nГруппы 7–9 детей\nМатематика каждый день\nАнглийский\nОтдельное здание\nЗакрытая территория\nПрогулки\nТрёхразовое питание включено',reply_markup=menu())
-@dp.message(lambda m: not group(m) and m.text=='📚 Программа')
+@dp.message(lambda m: not group(m) and norm(m.text)=='📚 программа')
 async def program(m): await m.answer('<b>Программа</b> 📚\n\nМатематика каждый день, английский язык, основные предметы, развитие самостоятельности.\n\n1–5 классы.',reply_markup=menu())
-@dp.message(lambda m: not group(m) and m.text=='🕘 Расписание')
+@dp.message(lambda m: not group(m) and norm(m.text)=='🕘 расписание')
 async def ps(m): await schedule(m)
-@dp.message(lambda m: not group(m) and m.text=='💰 Стоимость')
+@dp.message(lambda m: not group(m) and norm(m.text)=='💰 стоимость')
 async def pp(m): await price(m)
-@dp.message(lambda m: not group(m) and m.text=='📍 Как нас найти')
+@dp.message(lambda m: not group(m) and norm(m.text)=='📍 как нас найти')
 async def loc(m): await m.answer('<b>CoolClass</b> 📍\n\nМосква, ул. Плотинная, 28\nВнуково\n📞 +7 929 692-92-08',reply_markup=menu())
-@dp.message(lambda m: not group(m) and m.text=='🎓 Записаться')
+@dp.message(lambda m: not group(m) and norm(m.text)=='🎓 записаться')
 async def begin(m,state): await state.set_state(Lead.parent); await m.answer('Оставьте заявку.\n\n<b>Как вас зовут?</b>',reply_markup=ReplyKeyboardRemove())
 @dp.message(Lead.parent)
 async def parent(m,state): await state.update_data(parent=m.text or ''); await state.set_state(Lead.child); await m.answer('<b>Возраст или класс ребёнка?</b>')
@@ -105,11 +107,19 @@ async def interest(m,state):
  d=await state.get_data(); d['interest']=m.text or ''; u='@'+m.from_user.username if m.from_user.username else 'нет username'
  await admin('🔔 <b>Новая заявка CoolClass</b>\n\n👤 '+d.get('parent','')+'\n👧 '+d.get('child','')+'\n📞 '+d.get('phone','')+'\n🎯 '+d.get('interest','')+'\n💬 '+u+'\n🕐 '+datetime.now().strftime('%d.%m.%Y %H:%M:%S'))
  await state.clear(); await m.answer('✅ <b>Заявка принята!</b> Менеджер свяжется с вами.',reply_markup=menu())
-@dp.message(lambda m: not group(m) and m.text=='❓ Задать вопрос')
+@dp.message(lambda m: not group(m) and norm(m.text)=='❓ задать вопрос')
 async def qstart(m,state): await state.set_state(Lead.question); await m.answer('Напишите ваш вопрос.',reply_markup=ReplyKeyboardRemove())
 @dp.message(Lead.question)
 async def q(m,state):
  u='@'+m.from_user.username if m.from_user.username else 'нет username'; await admin('❓ <b>Вопрос</b>\n\n'+u+'\n'+(m.text or '')); await state.clear(); await m.answer('Спасибо! Вопрос передан менеджеру.',reply_markup=menu())
+
+@dp.message(lambda m: not group(m) and bool(m.text))
+async def private_fallback(m:Message):
+ t=norm(m.text); log.warning('Private message not matched: %r',m.text)
+ routes={'🏫 о школе':about,'📚 программа':program,'🕘 расписание':ps,'💰 стоимость':pp,'📍 как нас найти':loc,'🎓 записаться':begin,'❓ задать вопрос':qstart}
+ fn=routes.get(t)
+ if fn: return await fn(m, FSMContext(dp.storage)) if fn in (begin,qstart) else await fn(m)
+ await m.answer('Выберите раздел с помощью кнопок ниже.',reply_markup=menu())
 
 async def health(r): return web.json_response({'status':'ok','bot':'CoolClass'})
 async def startup(*a,**kw):
