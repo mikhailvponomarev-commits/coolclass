@@ -10,30 +10,38 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+
 TOKEN=os.getenv('BOT_TOKEN','').strip(); PORT=int(os.getenv('PORT','10000')); URL=os.getenv('RENDER_EXTERNAL_URL','').rstrip('/'); SECRET=os.getenv('WEBHOOK_SECRET') or secrets.token_urlsafe(24); ADMIN=os.getenv('ADMIN_USERNAME','Mikhail7890').lstrip('@').lower(); DB=os.getenv('DB_PATH','coolclass.db')
 if not TOKEN: raise RuntimeError('BOT_TOKEN is not set')
 if not URL: raise RuntimeError('RENDER_EXTERNAL_URL is not available')
 logging.basicConfig(level=logging.INFO); log=logging.getLogger('coolclass')
 bot=Bot(TOKEN,default=DefaultBotProperties(parse_mode=ParseMode.HTML)); dp=Dispatcher(storage=MemoryStorage())
+
 class Lead(StatesGroup): parent=State(); child=State(); phone=State(); interest=State(); question=State()
+
 def conn():
  c=sqlite3.connect(DB); c.execute('CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT NOT NULL)'); c.commit(); return c
+
 def get(k):
  c=conn(); r=c.execute('SELECT v FROM settings WHERE k=?',(k,)).fetchone(); c.close(); return r[0] if r else None
+
 def put(k,v):
  c=conn(); c.execute('INSERT INTO settings(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v',(k,v)); c.commit(); c.close()
+
 def menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='🏫 О школе'),KeyboardButton(text='📚 Программа')],[KeyboardButton(text='🕘 Расписание'),KeyboardButton(text='💰 Стоимость')],[KeyboardButton(text='📍 Как нас найти'),KeyboardButton(text='🎓 Записаться')],[KeyboardButton(text='❓ Задать вопрос')]],resize_keyboard=True)
 def phone_menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='📱 Отправить номер телефона',request_contact=True)],[KeyboardButton(text='↩️ Отмена')]],resize_keyboard=True,one_time_keyboard=True)
 def interest_menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='🎓 Поступление'),KeyboardButton(text='🏫 Перевод в школу')],[KeyboardButton(text='👀 Экскурсия'),KeyboardButton(text='❓ Пока просто узнаю')]],resize_keyboard=True)
-def group(m): return m.chat.type in ('group','supergroup')
-def cmd(text):
- s=(text or '').strip().lower(); return s.split()[0].split('@')[0] if s else ''
 async def admin(text):
  cid=get('admin_chat_id')
  if cid:
   try: await bot.send_message(cid,text)
   except Exception: log.exception('admin notification failed')
  else: log.warning('admin_chat_id is empty; owner must press /start')
+
+def group(m): return m.chat.type in ('group','supergroup')
+def cmd(text):
+ s=(text or '').strip().lower(); return (s.split()[0].split('@')[0] if s else '')
+
 @dp.message(CommandStart())
 async def start(m:Message,state:FSMContext):
  await state.clear()
@@ -41,10 +49,12 @@ async def start(m:Message,state:FSMContext):
  if (m.from_user.username or '').lower()==ADMIN:
   put('admin_chat_id',str(m.chat.id)); return await m.answer('✅ Вы зарегистрированы. Новые заявки будут приходить сюда.',reply_markup=menu())
  await m.answer('<b>Здравствуйте! Это CoolClass 👋</b>\n\nСемейная школа во Внуково, 1–5 классы, группы 7–9 детей, математический уклон.\n\nВыберите раздел:',reply_markup=menu())
+
 async def schedule(m): await m.answer('🕘 <b>Расписание</b>\n\nПонедельник–пятница\n<b>09:00–18:00</b>')
 async def price(m): await m.answer('💰 <b>Стоимость</b>\n\n<b>65 000 ₽ в месяц</b>\n\nВсё включено, в том числе <b>трёхразовое питание</b>.')
 async def signup(m): await m.answer('🎓 <b>Заявка</b>\n\nОткройте личный чат с @CoolclassVnukovobot и нажмите Start. Личные данные собираются только там.')
 async def question_info(m): await m.answer('❓ Задайте вопрос в личном чате с @CoolclassVnukovobot — так контактные данные останутся приватными.')
+
 @dp.message(lambda m: group(m) and cmd(m.text) in {'/расписание','/schedule'})
 async def gs(m): await schedule(m)
 @dp.message(lambda m: group(m) and cmd(m.text) in {'/стоимость','/price'})
@@ -58,14 +68,18 @@ async def gt(m):
  t=(m.text or '').strip().lower(); return await {'расписание':schedule,'стоимость':price,'записаться':signup,'вопрос':question_info}[t](m)
 @dp.message(lambda m: group(m) and bool(m.text))
 async def fallback(m): await m.answer('🤖 Я на связи. Используйте /расписание, /стоимость, /записаться или /вопрос')
-@dp.channel_post(lambda m: cmd(m.text) in {'/расписание','/schedule'})
+
+# Telegram channel posts are a separate update type.
+def chcmd(text): return cmd(text)
+@dp.channel_post(lambda m: chcmd(m.text) in {'/расписание','/schedule'})
 async def cs(m:Message): await schedule(m)
-@dp.channel_post(lambda m: cmd(m.text) in {'/стоимость','/price'})
+@dp.channel_post(lambda m: chcmd(m.text) in {'/стоимость','/price'})
 async def cp(m:Message): await price(m)
-@dp.channel_post(lambda m: cmd(m.text) in {'/записаться','/signup'})
+@dp.channel_post(lambda m: chcmd(m.text) in {'/записаться','/signup'})
 async def cu(m:Message): await signup(m)
-@dp.channel_post(lambda m: cmd(m.text) in {'/вопрос','/question'})
+@dp.channel_post(lambda m: chcmd(m.text) in {'/вопрос','/question'})
 async def cq(m:Message): await question_info(m)
+
 @dp.message(lambda m: not group(m) and m.text=='🏫 О школе')
 async def about(m): await m.answer('<b>CoolClass — семейная школа во Внуково</b> 🏫\n\n1–5 классы\nГруппы 7–9 детей\nМатематика каждый день\nАнглийский\nОтдельное здание\nЗакрытая территория\nПрогулки\nТрёхразовое питание включено',reply_markup=menu())
 @dp.message(lambda m: not group(m) and m.text=='📚 Программа')
@@ -97,16 +111,17 @@ async def qstart(m,state): await state.set_state(Lead.question); await m.answer(
 @dp.message(Lead.question)
 async def q(m,state):
  u='@'+m.from_user.username if m.from_user.username else 'нет username'; await admin('❓ <b>Вопрос</b>\n\n'+u+'\n'+(m.text or '')); await state.clear(); await m.answer('Спасибо! Вопрос передан менеджеру.',reply_markup=menu())
+
 async def health(r): return web.json_response({'status':'ok','bot':'CoolClass'})
 async def startup(*a,**kw):
  conn().close(); me=await bot.get_me(); log.info('BOT OK @%s id=%s',me.username,me.id)
- # IMPORTANT: do not call set_my_commands; Cyrillic command names cause BOT_COMMAND_INVALID.
- kwargs={'url':URL+'/webhook','drop_pending_updates':False,'allowed_updates':['message','channel_post']}
- if SECRET: kwargs['secret_token']=SECRET
- await bot.set_webhook(**kwargs)
+ await bot.set_my_commands([{'command':'start','description':'Начать'},{'command':'расписание','description':'Расписание'},{'command':'стоимость','description':'Стоимость'},{'command':'записаться','description':'Оставить заявку'},{'command':'вопрос','description':'Задать вопрос'}])
+ await bot.set_webhook(url=URL+'/webhook',secret_token=SECRET,drop_pending_updates=False,allowed_updates=['message','channel_post'])
  info=await bot.get_webhook_info(); log.info('WEBHOOK=%s pending=%s allowed=%s',info.url,info.pending_update_count,info.allowed_updates)
 async def shutdown(*a,**kw): await bot.delete_webhook(drop_pending_updates=False); await bot.session.close()
+
 app=web.Application(); app.router.add_get('/',health); app.router.add_get('/health',health)
-handler=SimpleRequestHandler(dispatcher=dp,bot=bot,secret_token=SECRET or None); handler.register(app,path='/webhook'); setup_application(app,dp,bot=bot)
+handler=SimpleRequestHandler(dispatcher=dp,bot=bot,secret_token=SECRET); handler.register(app,path='/webhook'); setup_application(app,dp,bot=bot)
 dp.startup.register(startup); dp.shutdown.register(shutdown)
+
 if __name__=='__main__': web.run_app(app,host='0.0.0.0',port=PORT)
