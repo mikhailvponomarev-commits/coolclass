@@ -8,7 +8,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, BotCommand
+from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 TOKEN=os.getenv('BOT_TOKEN','').strip(); PORT=int(os.getenv('PORT','10000')); URL=os.getenv('RENDER_EXTERNAL_URL','').rstrip('/'); SECRET=os.getenv('WEBHOOK_SECRET') or secrets.token_urlsafe(24); ADMIN=os.getenv('ADMIN_USERNAME','Mikhail7890').lstrip('@').lower(); DB=os.getenv('DB_PATH','coolclass.db')
@@ -69,13 +69,15 @@ async def gt(m):
 @dp.message(lambda m: group(m) and bool(m.text))
 async def fallback(m): await m.answer('🤖 Я на связи. Используйте /расписание, /стоимость, /записаться или /вопрос')
 
-@dp.channel_post(lambda m: cmd(m.text) in {'/расписание','/schedule'})
+# Telegram channel posts are a separate update type.
+def chcmd(text): return cmd(text)
+@dp.channel_post(lambda m: chcmd(m.text) in {'/расписание','/schedule'})
 async def cs(m:Message): await schedule(m)
-@dp.channel_post(lambda m: cmd(m.text) in {'/стоимость','/price'})
+@dp.channel_post(lambda m: chcmd(m.text) in {'/стоимость','/price'})
 async def cp(m:Message): await price(m)
-@dp.channel_post(lambda m: cmd(m.text) in {'/записаться','/signup'})
+@dp.channel_post(lambda m: chcmd(m.text) in {'/записаться','/signup'})
 async def cu(m:Message): await signup(m)
-@dp.channel_post(lambda m: cmd(m.text) in {'/вопрос','/question'})
+@dp.channel_post(lambda m: chcmd(m.text) in {'/вопрос','/question'})
 async def cq(m:Message): await question_info(m)
 
 @dp.message(lambda m: not group(m) and m.text=='🏫 О школе')
@@ -113,19 +115,10 @@ async def q(m,state):
 async def health(r): return web.json_response({'status':'ok','bot':'CoolClass'})
 async def startup(*a,**kw):
  conn().close(); me=await bot.get_me(); log.info('BOT OK @%s id=%s',me.username,me.id)
- # Telegram Bot API command names must contain only Latin lowercase letters, digits and underscores.
- await bot.set_my_commands([
-  BotCommand(command='start',description='Начать'),
-  BotCommand(command='schedule',description='Расписание'),
-  BotCommand(command='price',description='Стоимость'),
-  BotCommand(command='signup',description='Оставить заявку'),
-  BotCommand(command='question',description='Задать вопрос'),
- ])
+ await bot.set_my_commands([{'command':'start','description':'Начать'},{'command':'расписание','description':'Расписание'},{'command':'стоимость','description':'Стоимость'},{'command':'записаться','description':'Оставить заявку'},{'command':'вопрос','description':'Задать вопрос'}])
  await bot.set_webhook(url=URL+'/webhook',secret_token=SECRET,drop_pending_updates=False,allowed_updates=['message','channel_post'])
  info=await bot.get_webhook_info(); log.info('WEBHOOK=%s pending=%s allowed=%s',info.url,info.pending_update_count,info.allowed_updates)
-async def shutdown(*a,**kw):
- try: await bot.delete_webhook(drop_pending_updates=False)
- finally: await bot.session.close()
+async def shutdown(*a,**kw): await bot.delete_webhook(drop_pending_updates=False); await bot.session.close()
 
 app=web.Application(); app.router.add_get('/',health); app.router.add_get('/health',health)
 handler=SimpleRequestHandler(dispatcher=dp,bot=bot,secret_token=SECRET); handler.register(app,path='/webhook'); setup_application(app,dp,bot=bot)
