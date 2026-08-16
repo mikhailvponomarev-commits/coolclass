@@ -31,15 +31,16 @@ def put(k,v):
 def menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='🏫 О школе'),KeyboardButton(text='📚 Программа')],[KeyboardButton(text='🕘 Расписание'),KeyboardButton(text='💰 Стоимость')],[KeyboardButton(text='📍 Как нас найти'),KeyboardButton(text='🎓 Записаться')],[KeyboardButton(text='❓ Задать вопрос')]],resize_keyboard=True)
 def phone_menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='📱 Отправить номер телефона',request_contact=True)],[KeyboardButton(text='↩️ Отмена')]],resize_keyboard=True,one_time_keyboard=True)
 def interest_menu(): return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='🎓 Поступление'),KeyboardButton(text='🏫 Перевод в школу')],[KeyboardButton(text='👀 Экскурсия'),KeyboardButton(text='❓ Пока просто узнаю')]],resize_keyboard=True)
-def group(m): return m.chat.type in ('group','supergroup')
-def cmd(text):
- s=(text or '').strip().lower(); return s.split()[0].split('@')[0] if s else ''
 async def admin(text):
  cid=get('admin_chat_id')
  if cid:
   try: await bot.send_message(cid,text)
   except Exception: log.exception('admin notification failed')
  else: log.warning('admin_chat_id is empty; owner must press /start')
+
+def group(m): return m.chat.type in ('group','supergroup')
+def cmd(text):
+ s=(text or '').strip().lower(); return (s.split()[0].split('@')[0] if s else '')
 
 @dp.message(CommandStart())
 async def start(m:Message,state:FSMContext):
@@ -68,14 +69,16 @@ async def gt(m):
 @dp.message(lambda m: group(m) and bool(m.text))
 async def fallback(m): await m.answer('🤖 Я на связи. Используйте /расписание, /стоимость, /записаться или /вопрос')
 
-@dp.channel_post(lambda m: cmd(m.text) in {'/расписание','/schedule'})
-async def cs(m): await schedule(m)
-@dp.channel_post(lambda m: cmd(m.text) in {'/стоимость','/price'})
-async def cp(m): await price(m)
-@dp.channel_post(lambda m: cmd(m.text) in {'/записаться','/signup'})
-async def cu(m): await signup(m)
-@dp.channel_post(lambda m: cmd(m.text) in {'/вопрос','/question'})
-async def cq(m): await question_info(m)
+# Telegram channel posts are a separate update type.
+def chcmd(text): return cmd(text)
+@dp.channel_post(lambda m: chcmd(m.text) in {'/расписание','/schedule'})
+async def cs(m:Message): await schedule(m)
+@dp.channel_post(lambda m: chcmd(m.text) in {'/стоимость','/price'})
+async def cp(m:Message): await price(m)
+@dp.channel_post(lambda m: chcmd(m.text) in {'/записаться','/signup'})
+async def cu(m:Message): await signup(m)
+@dp.channel_post(lambda m: chcmd(m.text) in {'/вопрос','/question'})
+async def cq(m:Message): await question_info(m)
 
 @dp.message(lambda m: not group(m) and m.text=='🏫 О школе')
 async def about(m): await m.answer('<b>CoolClass — семейная школа во Внуково</b> 🏫\n\n1–5 классы\nГруппы 7–9 детей\nМатематика каждый день\nАнглийский\nОтдельное здание\nЗакрытая территория\nПрогулки\nТрёхразовое питание включено',reply_markup=menu())
@@ -112,10 +115,8 @@ async def q(m,state):
 async def health(r): return web.json_response({'status':'ok','bot':'CoolClass'})
 async def startup(*a,**kw):
  conn().close(); me=await bot.get_me(); log.info('BOT OK @%s id=%s',me.username,me.id)
- # IMPORTANT: do not call set_my_commands here. Telegram rejects Cyrillic command names with BOT_COMMAND_INVALID.
- kwargs={'url':URL+'/webhook','drop_pending_updates':False,'allowed_updates':['message','channel_post']}
- if SECRET: kwargs['secret_token']=SECRET
- await bot.set_webhook(**kwargs)
+ await bot.set_my_commands([{'command':'start','description':'Начать'},{'command':'расписание','description':'Расписание'},{'command':'стоимость','description':'Стоимость'},{'command':'записаться','description':'Оставить заявку'},{'command':'вопрос','description':'Задать вопрос'}])
+ await bot.set_webhook(url=URL+'/webhook',secret_token=SECRET,drop_pending_updates=False,allowed_updates=['message','channel_post'])
  info=await bot.get_webhook_info(); log.info('WEBHOOK=%s pending=%s allowed=%s',info.url,info.pending_update_count,info.allowed_updates)
 async def shutdown(*a,**kw): await bot.delete_webhook(drop_pending_updates=False); await bot.session.close()
 
