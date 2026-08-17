@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import sqlite3
 from datetime import datetime
@@ -11,6 +12,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Mikhail7890").lstrip("@").lower()
@@ -81,6 +85,7 @@ def get_admin_chat_id():
     return row[0] if row else None
 
 def answer_keyboard(index):
+    q = QUESTIONS[index]
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"{chr(65+i)}) {q[2][i]}", callback_data=f"quiz:{index}:{i}")] for i in range(4)])
 
 def lead_keyboard():
@@ -182,8 +187,18 @@ async def health(request):
 
 async def on_startup(app):
     db().close()
-    if PUBLIC_URL:
-        await bot.set_webhook(f"{PUBLIC_URL}/webhook", secret_token=WEBHOOK_SECRET, drop_pending_updates=False)
+    if not PUBLIC_URL:
+        logger.error("Webhook URL is empty: PUBLIC_URL and RENDER_EXTERNAL_URL are not set")
+        return
+    webhook_url = f"{PUBLIC_URL}/webhook"
+    try:
+        me = await bot.get_me()
+        logger.info("Telegram bot: @%s (%s)", me.username, me.id)
+        await bot.set_webhook(webhook_url, secret_token=WEBHOOK_SECRET, drop_pending_updates=False)
+        info = await bot.get_webhook_info()
+        logger.info("Webhook configured: url=%s pending=%s last_error=%s", info.url, info.pending_update_count, info.last_error_message)
+    except Exception:
+        logger.exception("Failed to configure Telegram webhook")
 
 async def on_shutdown(app):
     await bot.delete_webhook(drop_pending_updates=False)
