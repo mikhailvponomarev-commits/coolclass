@@ -15,7 +15,7 @@ services:
       - key: ADMIN_CHAT_ID
         sync: false
       - key: PUBLIC_URL
-        sync: false
+        value: https://coolclass-testbot.onrender.com
       - key: WEBHOOK_SECRET
         generateValue: true
       - key: DB_PATH
