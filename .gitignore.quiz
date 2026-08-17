@@ -1,0 +1,4 @@
+coolclass_quiz.db
+__pycache__/
+*.pyc
+.env
