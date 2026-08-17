@@ -1,0 +1,1 @@
+The legacy bot must remain on the pre-quiz main revision. The standalone test bot is quiz_bot.py and must use a separate Render service and BOT_TOKEN.
