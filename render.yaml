@@ -2,6 +2,7 @@ services:
   - type: web
     name: coolclass-testbot
     runtime: python
+    plan: free
     branch: feature/math-quiz-new-bot
     buildCommand: pip install -r requirements.txt
     startCommand: python quiz_bot.py
