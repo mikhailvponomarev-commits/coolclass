@@ -18,7 +18,6 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "").strip()
 DB_PATH = os.getenv("DB_PATH", "coolclass_quiz.db")
 PORT = int(os.getenv("PORT", "10000"))
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "coolclass-quiz")
-# Render provides RENDER_EXTERNAL_URL automatically. Use it when PUBLIC_URL is not set.
 PUBLIC_URL = (os.getenv("PUBLIC_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
 
 if not TOKEN:
@@ -27,12 +26,10 @@ if not TOKEN:
 bot = Bot(TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-
 class QuizState(StatesGroup):
     answering = State()
     child_name = State()
     phone = State()
-
 
 QUESTIONS = [
     ("Счёт", "🧮 Посчитай быстрее калькулятора:\n\n47 + 38 = ?", ["75", "85", "95", "83"], 1, "Сложи десятки и единицы отдельно."),
@@ -54,7 +51,6 @@ RESULTS = [
     (0, "🔔 Нужна дополнительная помощь", "Есть заметные пробелы. Важно начать с понятного ребёнку уровня и постепенно восстановить базу без давления."),
 ]
 
-
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("CREATE TABLE IF NOT EXISTS admins (username TEXT PRIMARY KEY, chat_id TEXT NOT NULL)")
@@ -62,13 +58,11 @@ def db():
     conn.commit()
     return conn
 
-
 def save_result(data):
     conn = db()
     conn.execute("INSERT INTO quiz_results(telegram_id,telegram_username,child_name,phone,score,topic_scores,wrong_questions,created_at) VALUES(?,?,?,?,?,?,?,?)", (str(data.get("telegram_id", "")), data.get("username", ""), data.get("child_name", ""), data.get("phone", ""), int(data.get("score", 0)), "; ".join(f"{k}: {v}/2" for k, v in data.get("topic_scores", {}).items()), ", ".join(str(i + 1) for i in data.get("wrong_questions", [])) or "нет", datetime.now().isoformat(timespec="seconds")))
     conn.commit()
     conn.close()
-
 
 def register_admin(username, chat_id):
     if not username or username.lower() != ADMIN_USERNAME:
@@ -78,7 +72,6 @@ def register_admin(username, chat_id):
     conn.commit()
     conn.close()
 
-
 def get_admin_chat_id():
     if ADMIN_CHAT_ID:
         return ADMIN_CHAT_ID
@@ -87,19 +80,15 @@ def get_admin_chat_id():
     conn.close()
     return row[0] if row else None
 
-
 def answer_keyboard(index):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"{chr(65+i)}) {q[2][i]}", callback_data=f"quiz:{index}:{i}")] for i in range(4)])
-
 
 def lead_keyboard():
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📱 Отправить номер телефона", request_contact=True)], [KeyboardButton(text="Пропустить")]], resize_keyboard=True, one_time_keyboard=True)
 
-
 async def show_question(message, index):
     topic, text, _, _, _ = QUESTIONS[index]
     await message.answer(f"<b>Вопрос {index+1} из 10</b> · {topic}\n\n{text}\n\nВыбери один вариант ответа 👇", reply_markup=answer_keyboard(index))
-
 
 @dp.message(CommandStart())
 async def start(message: Message, state: FSMContext):
@@ -109,7 +98,6 @@ async def start(message: Message, state: FSMContext):
     await state.update_data(index=0, score=0, attempts=0, topic_scores={"Счёт":0,"Задачи":0,"Дроби":0,"Геометрия":0,"Логика":0}, wrong_questions=[], telegram_id=message.from_user.id, username=message.from_user.username or "")
     await state.set_state(QuizState.answering)
     await show_question(message, 0)
-
 
 @dp.callback_query(F.data.startswith("quiz:"), QuizState.answering)
 async def answer(callback: CallbackQuery, state: FSMContext):
@@ -140,14 +128,12 @@ async def answer(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(f"❌ В этот раз не получилось. Правильный ответ: <b>{chr(65+correct)}) {options[correct]}</b>\n\n💡 {hint}")
     await next_question(callback.message, state, index)
 
-
 async def next_question(message, state, current):
     nxt = current + 1
     if nxt >= 10:
         await finish(message, state); return
     await state.update_data(index=nxt, attempts=0)
     await show_question(message, nxt)
-
 
 async def finish(message, state):
     data = await state.get_data(); score = int(data["score"]); topics = data["topic_scores"]
@@ -164,20 +150,17 @@ async def finish(message, state):
     await state.set_state(QuizState.child_name)
     await message.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📋 Получить рекомендации", callback_data="quiz_lead")]]))
 
-
 @dp.callback_query(F.data == "quiz_lead")
 async def lead_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(QuizState.child_name)
     await callback.message.answer("Как зовут ребёнка?", reply_markup=ReplyKeyboardRemove())
 
-
 @dp.message(QuizState.child_name)
 async def child_name(message: Message, state: FSMContext):
     await state.update_data(child_name=(message.text or "").strip())
     await state.set_state(QuizState.phone)
     await message.answer("Оставьте номер телефона родителя — мы передадим результат специалисту CoolClass.", reply_markup=lead_keyboard())
-
 
 @dp.message(QuizState.phone)
 async def phone(message: Message, state: FSMContext):
@@ -194,28 +177,24 @@ async def phone(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ Спасибо! Результат диагностики сохранён и передан специалисту CoolClass. Мы свяжемся с вами.", reply_markup=ReplyKeyboardRemove())
 
-
 async def health(request):
     return web.json_response({"status":"ok","bot":"CoolClassTest"})
-
 
 async def on_startup(app):
     db().close()
     if PUBLIC_URL:
         await bot.set_webhook(f"{PUBLIC_URL}/webhook", secret_token=WEBHOOK_SECRET, drop_pending_updates=False)
 
-
 async def on_shutdown(app):
     await bot.delete_webhook(drop_pending_updates=False)
     await bot.session.close()
-
 
 app = web.Application()
 app.router.add_get("/", health)
 app.router.add_get("/health", health)
 handler = SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET)
 handler.register(app, path="/webhook")
-setup_application(app, dp, bot=bot, on_startup=on_startup, on_shutdown=on_shutdown)
+setup_application(app, dp, bot=bot)
 
 if __name__ == "__main__":
     web.run_app(app, host="0.0.0.0", port=PORT)
