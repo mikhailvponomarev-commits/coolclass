@@ -18,7 +18,8 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "").strip()
 DB_PATH = os.getenv("DB_PATH", "coolclass_quiz.db")
 PORT = int(os.getenv("PORT", "10000"))
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "coolclass-quiz")
-PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")
+# Render provides RENDER_EXTERNAL_URL automatically. Use it when PUBLIC_URL is not set.
+PUBLIC_URL = (os.getenv("PUBLIC_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
 
 if not TOKEN:
     raise RuntimeError("BOT_TOKEN is not set")
@@ -214,9 +215,7 @@ app.router.add_get("/", health)
 app.router.add_get("/health", health)
 handler = SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET)
 handler.register(app, path="/webhook")
-setup_application(app, dp, bot=bot)
-app.on_startup.append(on_startup)
-app.on_cleanup.append(on_shutdown)
+setup_application(app, dp, bot=bot, on_startup=on_startup, on_shutdown=on_shutdown)
 
 if __name__ == "__main__":
     web.run_app(app, host="0.0.0.0", port=PORT)
