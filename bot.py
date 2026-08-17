@@ -46,19 +46,14 @@ class LeadForm(StatesGroup):
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS leads (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_name TEXT, child_age TEXT, phone TEXT, interest TEXT, telegram_username TEXT, created_at TEXT)"
-    )
+    conn.execute("CREATE TABLE IF NOT EXISTS leads (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_name TEXT, child_age TEXT, phone TEXT, interest TEXT, telegram_username TEXT, created_at TEXT)")
     conn.commit()
     return conn
 
 
 def set_setting(key: str, value: str):
     conn = db()
-    conn.execute(
-        "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (key, value),
-    )
+    conn.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
     conn.commit()
     conn.close()
 
@@ -74,14 +69,7 @@ def save_lead(data: dict):
     conn = db()
     conn.execute(
         "INSERT INTO leads(parent_name,child_age,phone,interest,telegram_username,created_at) VALUES(?,?,?,?,?,?)",
-        (
-            data["parent_name"],
-            data["child_age"],
-            data["phone"],
-            data["interest"],
-            data.get("username", ""),
-            datetime.now().isoformat(timespec="seconds"),
-        ),
+        (data["parent_name"], data["child_age"], data["phone"], data["interest"], data.get("username", ""), datetime.now().isoformat(timespec="seconds")),
     )
     conn.commit()
     conn.close()
@@ -91,9 +79,9 @@ def main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🏫 О школе"), KeyboardButton(text="📚 Программа")],
-            [KeyboardButton(text="🕘 Расписание"), KeyboardButton(text="💰 Стоимость")],
-            [KeyboardButton(text="📍 Как нас найти"), KeyboardButton(text="🎓 Записаться")],
-            [KeyboardButton(text="❓ Задать вопрос")],
+            [KeyboardButton(text="🧠 Проверить математику"), KeyboardButton(text="🕘 Расписание")],
+            [KeyboardButton(text="💰 Стоимость"), KeyboardButton(text="📍 Как нас найти")],
+            [KeyboardButton(text="🎓 Записаться"), KeyboardButton(text="❓ Задать вопрос")],
         ],
         resize_keyboard=True,
     )
@@ -101,10 +89,7 @@ def main_menu():
 
 def contact_keyboard():
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📱 Отправить номер телефона", request_contact=True)],
-            [KeyboardButton(text="↩️ Отмена")],
-        ],
+        keyboard=[[KeyboardButton(text="📱 Отправить номер телефона", request_contact=True)], [KeyboardButton(text="↩️ Отмена")]],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
@@ -124,10 +109,7 @@ async def register_admin(message: Message):
     username = (message.from_user.username or "").lower()
     if username == ADMIN_USERNAME:
         set_setting("admin_chat_id", str(message.chat.id))
-        await message.answer(
-            "✅ Вы зарегистрированы как получатель заявок. Новые заявки будут приходить сюда.",
-            reply_markup=main_menu(),
-        )
+        await message.answer("✅ Вы зарегистрированы как получатель заявок. Новые заявки будут приходить сюда.", reply_markup=main_menu())
         return True
     return False
 
@@ -152,8 +134,7 @@ async def start(message: Message, state: FSMContext):
         return
     await message.answer(
         "<b>Здравствуйте! Это CoolClass 👋</b>\n\n"
-        "Семейная школа во Внуково для детей 1–5 классов. "
-        "Небольшие классы, математический уклон, английский и спокойная домашняя атмосфера.\n\n"
+        "Семейная школа во Внуково для детей 1–5 классов. Небольшие классы, математический уклон, английский и спокойная домашняя атмосфера.\n\n"
         "Выберите, что хотите узнать:",
         reply_markup=main_menu(),
     )
@@ -170,15 +151,7 @@ async def cancel(message: Message, state: FSMContext):
 async def about(message: Message):
     await message.answer(
         "<b>CoolClass — семейная школа во Внуково</b> 🏫\n\n"
-        "• 1–5 классы\n"
-        "• небольшие классы 7–9 детей\n"
-        "• математика каждый день\n"
-        "• английский язык\n"
-        "• отдельное здание\n"
-        "• закрытая территория\n"
-        "• прогулки\n"
-        "• домашняя атмосфера\n"
-        "• трёхразовое питание включено\n\n"
+        "• 1–5 классы\n• небольшие классы 7–9 детей\n• математика каждый день\n• английский язык\n• отдельное здание\n• закрытая территория\n• прогулки\n• домашняя атмосфера\n• трёхразовое питание включено\n\n"
         "Главная идея CoolClass — не только дать знания, но и научить ребёнка думать и становиться самостоятельным.",
         reply_markup=main_menu(),
     )
@@ -189,9 +162,7 @@ async def program(message: Message):
     await message.answer(
         "<b>Что изучают дети</b> 📚\n\n"
         "🧮 Математика — каждый день, с акцентом на понимание и умение рассуждать.\n"
-        "🇬🇧 Английский язык.\n"
-        "📖 Основные предметы начальной школы.\n"
-        "🧠 Развитие самостоятельности и навыков планирования.\n\n"
+        "🇬🇧 Английский язык.\n📖 Основные предметы начальной школы.\n🧠 Развитие самостоятельности и навыков планирования.\n\n"
         "Школа рассчитана на 1–5 классы.",
         reply_markup=main_menu(),
     )
@@ -199,44 +170,23 @@ async def program(message: Message):
 
 @dp.message(F.text == "🕘 Расписание")
 async def schedule(message: Message):
-    await message.answer(
-        "<b>Режим школы</b> 🕘\n\n"
-        "Понедельник–пятница\n"
-        "<b>09:00–18:00</b>\n\n"
-        "В течение дня — занятия, питание, прогулки и дополнительные активности.",
-        reply_markup=main_menu(),
-    )
+    await message.answer("<b>Режим школы</b> 🕘\n\nПонедельник–пятница\n<b>09:00–18:00</b>\n\nВ течение дня — занятия, питание, прогулки и дополнительные активности.", reply_markup=main_menu())
 
 
 @dp.message(F.text == "💰 Стоимость")
 async def price(message: Message):
-    await message.answer(
-        "<b>Стоимость обучения</b> 💰\n\n"
-        "<b>60 000 ₽ в месяц</b>\n\n"
-        "В стоимость включено всё необходимое в течение школьного дня, в том числе <b>трёхразовое питание</b>.\n\n"
-        "Чтобы узнать подробности и подобрать класс для ребёнка, можно записаться на экскурсию.",
-        reply_markup=main_menu(),
-    )
+    await message.answer("<b>Стоимость обучения</b> 💰\n\n<b>60 000 ₽ в месяц</b>\n\nВ стоимость включено всё необходимое в течение школьного дня, в том числе <b>трёхразовое питание</b>.\n\nЧтобы узнать подробности и подобрать класс для ребёнка, можно записаться на экскурсию.", reply_markup=main_menu())
 
 
 @dp.message(F.text == "📍 Как нас найти")
 async def location(message: Message):
-    await message.answer(
-        "<b>Адрес CoolClass</b> 📍\n\n"
-        "Москва, ул. Плотинная, 28\n"
-        "район Внуково\n\n"
-        "📞 <a href=\"tel:+79296929208\">+7 929 692-92-08</a>",
-        reply_markup=main_menu(),
-    )
+    await message.answer("<b>Адрес CoolClass</b> 📍\n\nМосква, ул. Плотинная, 28\nрайон Внуково\n\n📞 <a href=\"tel:+79296929208\">+7 929 692-92-08</a>", reply_markup=main_menu())
 
 
 @dp.message(F.text == "🎓 Записаться")
 async def begin_lead(message: Message, state: FSMContext):
     await state.set_state(LeadForm.parent_name)
-    await message.answer(
-        "Отлично! Оставьте заявку — менеджер свяжется с вами.\n\n<b>Как вас зовут?</b>",
-        reply_markup=ReplyKeyboardRemove(),
-    )
+    await message.answer("Отлично! Оставьте заявку — менеджер свяжется с вами.\n\n<b>Как вас зовут?</b>", reply_markup=ReplyKeyboardRemove())
 
 
 @dp.message(LeadForm.parent_name)
@@ -246,28 +196,22 @@ async def lead_name(message: Message, state: FSMContext):
         return
     await state.update_data(parent_name=message.text.strip())
     await state.set_state(LeadForm.child_age)
-    await message.answer(
-        "<b>Сколько лет ребёнку?</b> Можно написать возраст или класс, например: «7 лет» или «2 класс»."
-    )
+    await message.answer("<b>Сколько лет ребёнку?</b> Можно написать возраст или класс, например: «7 лет» или «2 класс».")
 
 
 @dp.message(LeadForm.child_age)
 async def lead_age(message: Message, state: FSMContext):
-    if not message.text or len(message.text.strip()) < 1:
+    if not message.text or not message.text.strip():
         await message.answer("Укажите возраст или класс ребёнка.")
         return
     await state.update_data(child_age=message.text.strip())
     await state.set_state(LeadForm.phone)
-    await message.answer(
-        "<b>Оставьте номер телефона</b>, чтобы менеджер мог связаться с вами.",
-        reply_markup=contact_keyboard(),
-    )
+    await message.answer("<b>Оставьте номер телефона</b>, чтобы менеджер мог связаться с вами.", reply_markup=contact_keyboard())
 
 
 @dp.message(LeadForm.phone, F.contact)
 async def lead_phone_contact(message: Message, state: FSMContext):
-    phone = message.contact.phone_number
-    await state.update_data(phone=phone)
+    await state.update_data(phone=message.contact.phone_number)
     await state.set_state(LeadForm.interest)
     await message.answer("<b>Что вас сейчас интересует?</b>", reply_markup=interest_keyboard())
 
@@ -276,10 +220,7 @@ async def lead_phone_contact(message: Message, state: FSMContext):
 async def lead_phone_text(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     if len(text) < 7:
-        await message.answer(
-            "Пожалуйста, отправьте корректный номер телефона кнопкой ниже.",
-            reply_markup=contact_keyboard(),
-        )
+        await message.answer("Пожалуйста, отправьте корректный номер телефона кнопкой ниже.", reply_markup=contact_keyboard())
         return
     await state.update_data(phone=text)
     await state.set_state(LeadForm.interest)
@@ -292,36 +233,20 @@ async def lead_interest(message: Message, state: FSMContext):
     data["interest"] = message.text or "Не указано"
     data["username"] = message.from_user.username or ""
     save_lead(data)
-
     username = f"@{data['username']}" if data.get("username") else "нет username"
-    text = (
+    await notify_admin(
         "🔔 <b>Новая заявка CoolClass</b>\n\n"
-        f"👤 Родитель: {data['parent_name']}\n"
-        f"👧 Возраст/класс: {data['child_age']}\n"
-        f"📞 Телефон: {data['phone']}\n"
-        f"🎯 Интерес: {data['interest']}\n"
-        f"💬 Telegram: {username}\n"
-        f"🕐 Время: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
-        "Источник: Telegram-бот"
+        f"👤 Родитель: {data['parent_name']}\n👧 Возраст/класс: {data['child_age']}\n📞 Телефон: {data['phone']}\n"
+        f"🎯 Интерес: {data['interest']}\n💬 Telegram: {username}\n🕐 Время: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n\nИсточник: Telegram-бот"
     )
-    await notify_admin(text)
-
     await state.clear()
-    await message.answer(
-        "<b>Спасибо! Заявка принята ✅</b>\n\n"
-        "Менеджер CoolClass свяжется с вами по указанному номеру.\n\n"
-        "Если хотите, можете сразу посмотреть информацию о школе в меню.",
-        reply_markup=main_menu(),
-    )
+    await message.answer("<b>Спасибо! Заявка принята ✅</b>\n\nМенеджер CoolClass свяжется с вами по указанному номеру.", reply_markup=main_menu())
 
 
 @dp.message(F.text == "❓ Задать вопрос")
 async def question_start(message: Message, state: FSMContext):
     await state.set_state(LeadForm.question_text)
-    await message.answer(
-        "Напишите ваш вопрос одним сообщением — я передам его менеджеру.",
-        reply_markup=ReplyKeyboardRemove(),
-    )
+    await message.answer("Напишите ваш вопрос одним сообщением — я передам его менеджеру.", reply_markup=ReplyKeyboardRemove())
 
 
 @dp.message(LeadForm.question_text)
@@ -330,28 +255,19 @@ async def question_receive(message: Message, state: FSMContext):
     if not question_text:
         await message.answer("Пожалуйста, напишите вопрос текстом.")
         return
-
     username = f"@{message.from_user.username}" if message.from_user.username else "нет username"
-    admin_text = (
-        "❓ <b>Вопрос от посетителя CoolClass</b>\n\n"
-        f"💬 Telegram: {username}\n"
-        f"👤 Имя в Telegram: {message.from_user.full_name}\n\n"
-        f"Вопрос:\n{question_text}"
-    )
-    await notify_admin(admin_text)
+    await notify_admin("❓ <b>Вопрос от посетителя CoolClass</b>\n\n" f"💬 Telegram: {username}\n👤 Имя: {message.from_user.full_name}\n\nВопрос:\n{question_text}")
     await state.clear()
-    await message.answer(
-        "Спасибо! Вопрос передан менеджеру CoolClass. Вам ответят в ближайшее время.",
-        reply_markup=main_menu(),
-    )
+    await message.answer("Спасибо! Вопрос передан менеджеру CoolClass. Вам ответят в ближайшее время.", reply_markup=main_menu())
+
+
+# The quiz module registers its handlers after all shared bot helpers exist.
+import quiz  # noqa: E402,F401
 
 
 @dp.message()
 async def fallback(message: Message):
-    await message.answer(
-        "Я могу рассказать о школе, программе, расписании и стоимости или принять заявку. Выберите пункт меню ниже.",
-        reply_markup=main_menu(),
-    )
+    await message.answer("Я могу рассказать о школе, программе, расписании и стоимости или принять заявку. Выберите пункт меню ниже.", reply_markup=main_menu())
 
 
 async def health(request: web.Request):
@@ -361,11 +277,7 @@ async def health(request: web.Request):
 async def on_startup(bot_instance: Bot):
     db().close()
     webhook_url = f"{PUBLIC_URL}{WEBHOOK_PATH}"
-    await bot_instance.set_webhook(
-        url=webhook_url,
-        secret_token=WEBHOOK_SECRET,
-        drop_pending_updates=False,
-    )
+    await bot_instance.set_webhook(url=webhook_url, secret_token=WEBHOOK_SECRET, drop_pending_updates=False)
     logger.info("CoolClass bot started with webhook: %s", webhook_url)
 
 
@@ -380,15 +292,8 @@ def create_app():
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
-
-    webhook_handler = SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot,
-        secret_token=WEBHOOK_SECRET,
-        handle_in_background=True,
-    )
+    webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET, handle_in_background=True)
     webhook_handler.register(app, path=WEBHOOK_PATH)
-
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
     setup_application(app, dp, bot=bot)
