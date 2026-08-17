@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: coolclass-testbot
+    runtime: python
+    branch: feature/math-quiz-new-bot
+    buildCommand: pip install -r requirements.txt
+    startCommand: python quiz_bot.py
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_USERNAME
+        value: Mikhail7890
+      - key: ADMIN_CHAT_ID
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: DB_PATH
+        value: coolclass_quiz.db
